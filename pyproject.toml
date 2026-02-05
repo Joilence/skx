@@ -1,0 +1,46 @@
+[project]
+name = "skx"
+version = "0.1.0"
+description = "Agent Skill format conversion"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.0",
+    "python-frontmatter>=1.1.0",
+    "rich>=13.0",
+]
+
+[dependency-groups]
+dev = [
+  "pre-commit",
+  "ty",
+  "pytest",
+  "ruff",
+]
+
+[project.scripts]
+skx = "skx.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff.lint]
+extend-select = [
+    # Use pyupgrade rules which prefers modern syntax, e.g.:
+    # "UP045", # Prefer `T | None` over `Optional[T]`
+    # "UP006", # Prefer `list` over `typing.List`
+    "UP",
+    "I",  # Keep defaults + add import sorting
+    "F",  # Pyflakes (includes F401 for unused imports)
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skx"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+pythonpath = "src"
