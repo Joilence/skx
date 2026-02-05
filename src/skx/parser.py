@@ -32,7 +32,7 @@ class SkillFile:
         """Serialize back to markdown with frontmatter."""
         post = frontmatter.Post(self.content)
         post.metadata.update(self.frontmatter)
-        return frontmatter.dumps(post)
+        return frontmatter.dumps(post).rstrip("\n") + "\n"
 
 
 def _preprocess_frontmatter(fm_text: str) -> str:
