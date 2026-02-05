@@ -116,16 +116,12 @@ def main(
     Examples:
         # Convert single file (auto-detect format)
         skx ./my-skill/SKILL.md --to gemini --output ./converted/
-
         # Convert directory of skills
         skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
-
         # In-place conversion (with backup)
         skx ./SKILL.md --to gemini --in-place
-
         # Dry run (show diff)
         skx ./SKILL.md --to gemini --dry-run
-
         # Auto-detect and convert to opposite format
         skx ./SKILL.md --to auto
     """
