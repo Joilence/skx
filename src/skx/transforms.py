@@ -1,4 +1,4 @@
-"""Transform rules for converting between Claude Code and Gemini CLI skill syntax."""
+"""Transform rules for converting between Claude Code, Gemini CLI, and Codex CLI skill syntax."""
 
 import re
 from enum import Enum
@@ -9,6 +9,7 @@ class Format(Enum):
 
     CLAUDE = "claude"
     GEMINI = "gemini"
+    CODEX = "codex"
 
 
 # Conversion rules: (pattern, replacement)
@@ -26,6 +27,41 @@ GEMINI_TO_CLAUDE: list[tuple[str, str]] = [
     (r"\{\{args\}\}", r"$ARGUMENTS"),  # {{args}} -> $ARGUMENTS
     (r"@\{([^}]+)\}", r"@\1"),  # @{file} -> @file
 ]
+
+# Codex CLI has no template directives. Conversion rewrites directives to prose.
+CLAUDE_TO_CODEX: list[tuple[str, str]] = [
+    (r"!`([^`]+)`", r"Run `\1`"),  # !`cmd` -> Run `cmd`
+    (r"\$ARGUMENTS\[(\d+)\]", r"argument \1"),  # $ARGUMENTS[N] -> argument N
+    (r"\$ARGUMENTS", r"the user's input"),  # $ARGUMENTS -> the user's input
+    (r"\$([0-9])(?!\d)", r"argument \1"),  # $N -> argument N (single digit only)
+    (r"@([a-zA-Z0-9._/-]+)(?=[\s\]\)\},:;]|$)", r"\1"),  # @file -> file
+]
+
+# Codex CLI SKILL.md only supports these frontmatter fields.
+# Source: openai/codex codex-rs/core/src/skills/loader.rs SkillFrontmatter struct
+CODEX_KEEP_FRONTMATTER = {"name", "description", "metadata"}
+CODEX_NAME_MAX_LENGTH = 64
+CODEX_DESCRIPTION_MAX_LENGTH = 1024
+
+
+def prune_frontmatter_for_codex(
+    frontmatter: dict[str, object],
+) -> dict[str, object]:
+    """Keep only Codex-supported frontmatter fields.
+
+    Codex CLI recognizes: name, description, metadata (with short-description).
+    All other fields are stripped. Truncates name and description to Codex limits.
+    """
+    pruned = {k: v for k, v in frontmatter.items() if k in CODEX_KEEP_FRONTMATTER}
+    if "name" in pruned and isinstance(pruned["name"], str):
+        name = pruned["name"]
+        if len(name) > CODEX_NAME_MAX_LENGTH:
+            pruned["name"] = name[:CODEX_NAME_MAX_LENGTH]
+    if "description" in pruned and isinstance(pruned["description"], str):
+        desc = pruned["description"]
+        if len(desc) > CODEX_DESCRIPTION_MAX_LENGTH:
+            pruned["description"] = desc[:CODEX_DESCRIPTION_MAX_LENGTH]
+    return pruned
 
 
 def detect_format(content: str) -> Format | None:
@@ -67,7 +103,14 @@ def convert(content: str, target: Format) -> str:
 
     Does not preserve code blocks. Use convert_preserving_code_blocks for that.
     """
-    rules = GEMINI_TO_CLAUDE if target == Format.CLAUDE else CLAUDE_TO_GEMINI
+    if target == Format.CLAUDE:
+        rules = GEMINI_TO_CLAUDE
+    elif target == Format.CODEX:
+        rules = CLAUDE_TO_CODEX
+    elif target == Format.GEMINI:
+        rules = CLAUDE_TO_GEMINI
+    else:
+        raise ValueError(f"Unsupported target format: {target}")
     return _apply_rules(content, rules)
 
 
@@ -77,6 +120,10 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     Protects content inside fenced code blocks (```) and inline code (`)
     from transformation.
     """
+    # Codex rules assume Claude source. Convert Gemini->Claude first if needed.
+    if target == Format.CODEX and detect_format(content) == Format.GEMINI:
+        content = convert_preserving_code_blocks(content, Format.CLAUDE)
+
     code_blocks: list[str] = []
 
     def save_block(match: re.Match[str]) -> str:
@@ -89,18 +136,32 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     # Apply shell execution and argument transforms BEFORE protecting inline code.
     # Shell execution uses backticks (!`cmd`) that would otherwise be protected.
     # Argument references (`$ARGUMENTS`) in skill docs should be converted too.
-    if target == Format.GEMINI:
+    if target == Format.CODEX:
+        protected = re.sub(r"!`([^`]+)`", r"Run `\1`", protected)
+        protected = re.sub(r"\$ARGUMENTS\[(\d+)\]", r"argument \1", protected)
+        protected = re.sub(r"\$ARGUMENTS", r"the user's input", protected)
+        protected = re.sub(r"\$([0-9])(?!\d)", r"argument \1", protected)
+    elif target == Format.GEMINI:
         protected = re.sub(r"!`([^`]+)`", r"!{\1}", protected)
         protected = re.sub(r"\$ARGUMENTS", r"{{args}}", protected)
-    else:
+    elif target == Format.CLAUDE:
         protected = re.sub(r"!\{([^}]+)\}", r"!`\1`", protected)
         protected = re.sub(r"\{\{args\}\}", r"$ARGUMENTS", protected)
+    else:
+        raise ValueError(f"Unsupported target format: {target}")
 
     # Now protect remaining inline code
     protected = re.sub(r"`[^`]+`", save_block, protected)
 
     # Apply remaining transforms (file references only)
-    rules = GEMINI_TO_CLAUDE[2:] if target == Format.CLAUDE else CLAUDE_TO_GEMINI[2:]
+    if target == Format.CODEX:
+        rules = CLAUDE_TO_CODEX[4:]  # @file -> file only
+    elif target == Format.CLAUDE:
+        rules = GEMINI_TO_CLAUDE[2:]
+    elif target == Format.GEMINI:
+        rules = CLAUDE_TO_GEMINI[2:]
+    else:
+        raise ValueError(f"Unsupported target format: {target}")
     converted = _apply_rules(protected, rules)
 
     # Restore code blocks

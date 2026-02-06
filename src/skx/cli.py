@@ -9,7 +9,12 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from skx.parser import SkillFile, SkillParseError, parse_file
-from skx.transforms import Format, convert_preserving_code_blocks, detect_format
+from skx.transforms import (
+    Format,
+    convert_preserving_code_blocks,
+    detect_format,
+    prune_frontmatter_for_codex,
+)
 from skx.writer import compute_output_path, find_skill_files, write_file, write_in_place
 
 console = Console()
@@ -21,6 +26,8 @@ def get_target_format(to: str, content: str) -> Format:
         return Format.CLAUDE
     if to == "gemini":
         return Format.GEMINI
+    if to == "codex":
+        return Format.CODEX
 
     # auto: detect current format and convert to opposite
     detected = detect_format(content)
@@ -40,18 +47,23 @@ def process_file(
     dry_run: bool,
 ) -> bool:
     """Process a single skill file. Returns True if changes were made."""
-    original_content = skill.content
+    original_output = skill.to_string()
+
+    if target == Format.CODEX:
+        skill.frontmatter = prune_frontmatter_for_codex(skill.frontmatter)
+
     skill.content = convert_preserving_code_blocks(skill.content, target)
 
-    if skill.content == original_content:
+    new_output = skill.to_string()
+    if new_output == original_output:
         console.print(f"[dim]{skill.path}: no changes needed[/dim]")
         return False
 
     if dry_run:
         diff = list(
             unified_diff(
-                original_content.splitlines(keepends=True),
-                skill.content.splitlines(keepends=True),
+                original_output.splitlines(keepends=True),
+                new_output.splitlines(keepends=True),
                 fromfile=str(skill.path),
                 tofile=str(skill.path),
             )
@@ -77,7 +89,7 @@ def process_file(
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False)
 @click.option(
     "--to",
-    type=click.Choice(["claude", "gemini", "auto"]),
+    type=click.Choice(["claude", "gemini", "codex", "auto"]),
     default="auto",
     help="Target format. 'auto' detects current format and converts to opposite.",
 )
@@ -108,7 +120,7 @@ def main(
     in_place: bool,
     dry_run: bool,
 ) -> None:
-    """Convert SKILL.md files between Claude Code and Gemini CLI formats.
+    """Convert SKILL.md files between Claude Code, Gemini CLI, and Codex CLI formats.
 
     PATH can be a single SKILL.md file or a directory containing skill files.
 
@@ -118,10 +130,12 @@ def main(
         skx ./my-skill/SKILL.md --to gemini --output ./converted/
         # Convert directory of skills
         skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
+        # Convert to Codex CLI format (strips Claude-specific frontmatter)
+        skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
         # In-place conversion (with backup)
         skx ./SKILL.md --to gemini --in-place
         # Dry run (show diff)
-        skx ./SKILL.md --to gemini --dry-run
+        skx ./SKILL.md --to codex --dry-run
         # Auto-detect and convert to opposite format
         skx ./SKILL.md --to auto
     """

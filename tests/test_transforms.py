@@ -10,6 +10,7 @@ from skx.transforms import (
     convert,
     convert_preserving_code_blocks,
     detect_format,
+    prune_frontmatter_for_codex,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -46,6 +47,85 @@ class TestBasicTransforms:
         )
 
 
+class TestClaudeToCodexTransforms:
+    """Test Claude to Codex conversion (directive rewriting to prose)."""
+
+    def test_shell_execution(self):
+        assert convert('!`echo "hello"`', Format.CODEX) == 'Run `echo "hello"`'
+
+    def test_arguments(self):
+        assert convert("use $ARGUMENTS here", Format.CODEX) == "use the user's input here"
+
+    def test_indexed_arguments(self):
+        assert convert("$ARGUMENTS[0] and $ARGUMENTS[1]", Format.CODEX) == "argument 0 and argument 1"
+
+    def test_positional_arguments(self):
+        assert convert("$0 and $1", Format.CODEX) == "argument 0 and argument 1"
+
+    def test_positional_arguments_ignores_dollar_amounts(self):
+        assert convert("costs $100", Format.CODEX) == "costs $100"
+        assert convert("$5 tip", Format.CODEX) == "argument 5 tip"
+        assert convert("$10 bill", Format.CODEX) == "$10 bill"
+
+    def test_file_reference(self):
+        assert convert("see @README.md for info", Format.CODEX) == "see README.md for info"
+
+    def test_file_reference_with_path(self):
+        assert convert("see @src/main.py", Format.CODEX) == "see src/main.py"
+
+    def test_combined(self):
+        content = 'Run !`git diff` with $ARGUMENTS and check @README.md'
+        result = convert(content, Format.CODEX)
+        assert "Run `git diff`" in result
+        assert "the user's input" in result
+        assert result.count("@") == 0
+
+
+class TestCodexFrontmatterPruning:
+    """Test frontmatter pruning for Codex CLI."""
+
+    def test_keeps_only_codex_fields(self):
+        fm = {
+            "name": "test",
+            "description": "A test skill",
+            "argument-hint": "[file]",
+            "allowed-tools": "Read, Write",
+            "model": "sonnet",
+            "context": "fork",
+            "agent": "Explore",
+            "hooks": {},
+            "disable-model-invocation": True,
+            "user-invocable": False,
+        }
+        result = prune_frontmatter_for_codex(fm)
+        assert result == {"name": "test", "description": "A test skill"}
+
+    def test_strips_unknown_fields(self):
+        fm = {"name": "test", "description": "desc", "license": "MIT", "custom": "value"}
+        result = prune_frontmatter_for_codex(fm)
+        assert result == {"name": "test", "description": "desc"}
+
+    def test_keeps_metadata(self):
+        fm = {"name": "test", "description": "desc", "metadata": {"short-description": "short"}}
+        result = prune_frontmatter_for_codex(fm)
+        assert result == {"name": "test", "description": "desc", "metadata": {"short-description": "short"}}
+
+    def test_truncates_long_description(self):
+        fm = {"name": "test", "description": "x" * 1100}
+        result = prune_frontmatter_for_codex(fm)
+        assert len(result["description"]) == 1024
+
+    def test_truncates_long_name(self):
+        fm = {"name": "a" * 100, "description": "desc"}
+        result = prune_frontmatter_for_codex(fm)
+        assert len(result["name"]) == 64
+
+    def test_preserves_short_description(self):
+        fm = {"name": "test", "description": "short"}
+        result = prune_frontmatter_for_codex(fm)
+        assert result["description"] == "short"
+
+
 class TestCodeBlockProtection:
     """Test that code blocks are preserved during transformation."""
 
@@ -71,6 +151,42 @@ Outside again: $ARGUMENTS
         result = convert_preserving_code_blocks(content, Format.GEMINI)
         assert "Transform {{args}}" in result
         assert "`{{args}}`" in result
+
+    def test_codex_preserves_fenced_code_block(self):
+        content = """Outside: $ARGUMENTS
+
+```bash
+# Inside code block: $ARGUMENTS should NOT change
+echo "hello"
+```
+
+Outside again: $ARGUMENTS
+"""
+        result = convert_preserving_code_blocks(content, Format.CODEX)
+        assert "Outside: the user's input" in result
+        assert "Outside again: the user's input" in result
+        assert "$ARGUMENTS" in result  # Inside code block preserved
+
+    def test_codex_converts_inline_code_arguments(self):
+        content = "Transform $ARGUMENTS and also `$ARGUMENTS` in inline code"
+        result = convert_preserving_code_blocks(content, Format.CODEX)
+        assert "Transform the user's input" in result
+        assert "`the user's input`" in result
+
+    def test_codex_shell_directive_rewriting(self):
+        content = "Context: !`git branch --show-current`\nDiff: !`git diff`"
+        result = convert_preserving_code_blocks(content, Format.CODEX)
+        assert "Run `git branch --show-current`" in result
+        assert "Run `git diff`" in result
+
+    def test_codex_converts_gemini_source(self):
+        content = "Execute !{echo hello} with {{args}} and @{README.md}"
+        result = convert_preserving_code_blocks(content, Format.CODEX)
+        assert "!{" not in result
+        assert "{{args}}" not in result
+        assert "@{" not in result
+        assert "Run `echo hello`" in result
+        assert "the user's input" in result
 
     def test_preserves_multiple_code_blocks(self):
         content = """
@@ -126,6 +242,12 @@ class TestFixtureFiles:
     def test_gemini_fixture_detected_as_gemini(self):
         skill = parse_file(FIXTURES / "gemini_skill.md")
         assert detect_format(skill.content) == Format.GEMINI
+
+    def test_codex_fixture_matches_expected(self):
+        skill = parse_file(FIXTURES / "claude_skill.md")
+        expected = parse_file(FIXTURES / "codex_skill.md")
+        result = convert_preserving_code_blocks(skill.content, Format.CODEX)
+        assert result.strip() == expected.content.strip()
 
     def test_roundtrip_claude_to_gemini_to_claude(self):
         skill = parse_file(FIXTURES / "claude_skill.md")
@@ -395,6 +517,75 @@ $ARGUMENTS here
         assert result.exit_code == 1
         assert "1 file(s) had errors" in result.output
         assert "1/2" in result.output  # 1 of 2 files changed
+
+    def test_codex_conversion_prunes_frontmatter(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: A test skill
+allowed-tools: Read, Write, Bash(git:*)
+argument-hint: "[file]"
+model: sonnet
+---
+
+Use $ARGUMENTS to do things.
+"""
+        )
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "codex", "-o", str(output_dir / "SKILL.md")]
+        )
+        assert result.exit_code == 0
+
+        output = (output_dir / "SKILL.md").read_text()
+        assert "allowed-tools" not in output
+        assert "argument-hint" not in output
+        assert "model" not in output
+        assert "name: test-skill" in output
+        assert "description: A test skill" in output
+        assert "the user's input" in output
+
+    def test_codex_frontmatter_only_changes_are_written(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: A test skill
+allowed-tools: Read, Write
+model: sonnet
+---
+
+Plain body with no directives.
+"""
+        )
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "codex", "-o", str(output_dir / "SKILL.md")]
+        )
+        assert result.exit_code == 0
+        assert "no changes needed" not in result.output
+
+        output = (output_dir / "SKILL.md").read_text()
+        assert "allowed-tools" not in output
+        assert "model" not in output
+        assert "name: test-skill" in output
 
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner
