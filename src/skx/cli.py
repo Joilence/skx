@@ -56,7 +56,11 @@ def process_file(
 
     new_output = skill.to_string()
     if new_output == original_output:
-        console.print(f"[dim]{skill.path}: no changes needed[/dim]")
+        if output_path and not dry_run:
+            write_file(skill, output_path)
+            console.print(f"[dim]{skill.path} -> {output_path} (no changes)[/dim]")
+        else:
+            console.print(f"[dim]{skill.path}: no changes needed[/dim]")
         return False
 
     if dry_run:
@@ -185,9 +189,16 @@ def main(
                 console.print(f"[red]Error reading/writing {skill_path}: {e}[/red]")
                 errors += 1
 
-        console.print(
-            f"\n[bold]{changed}/{len(skill_files)} file(s) {'would be ' if dry_run else ''}changed[/bold]"
-        )
+        total = len(skill_files)
+        if dry_run:
+            console.print(f"\n[bold]{changed}/{total} file(s) would be changed[/bold]")
+        elif output:
+            written = total - errors
+            console.print(
+                f"\n[bold]{changed}/{total} file(s) converted, {written}/{total} file(s) synced[/bold]"
+            )
+        else:
+            console.print(f"\n[bold]{changed}/{total} file(s) changed[/bold]")
         if errors:
             console.print(f"[yellow]{errors} file(s) had errors[/yellow]")
             sys.exit(1)
