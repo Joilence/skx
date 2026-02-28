@@ -11,6 +11,7 @@ from skx.transforms import (
     convert_preserving_code_blocks,
     detect_format,
     prune_frontmatter_for_codex,
+    prune_frontmatter_for_pi,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -54,10 +55,15 @@ class TestClaudeToCodexTransforms:
         assert convert('!`echo "hello"`', Format.CODEX) == 'Run `echo "hello"`'
 
     def test_arguments(self):
-        assert convert("use $ARGUMENTS here", Format.CODEX) == "use the user's input here"
+        assert (
+            convert("use $ARGUMENTS here", Format.CODEX) == "use the user's input here"
+        )
 
     def test_indexed_arguments(self):
-        assert convert("$ARGUMENTS[0] and $ARGUMENTS[1]", Format.CODEX) == "argument 0 and argument 1"
+        assert (
+            convert("$ARGUMENTS[0] and $ARGUMENTS[1]", Format.CODEX)
+            == "argument 0 and argument 1"
+        )
 
     def test_positional_arguments(self):
         assert convert("$0 and $1", Format.CODEX) == "argument 0 and argument 1"
@@ -68,13 +74,15 @@ class TestClaudeToCodexTransforms:
         assert convert("$10 bill", Format.CODEX) == "$10 bill"
 
     def test_file_reference(self):
-        assert convert("see @README.md for info", Format.CODEX) == "see README.md for info"
+        assert (
+            convert("see @README.md for info", Format.CODEX) == "see README.md for info"
+        )
 
     def test_file_reference_with_path(self):
         assert convert("see @src/main.py", Format.CODEX) == "see src/main.py"
 
     def test_combined(self):
-        content = 'Run !`git diff` with $ARGUMENTS and check @README.md'
+        content = "Run !`git diff` with $ARGUMENTS and check @README.md"
         result = convert(content, Format.CODEX)
         assert "Run `git diff`" in result
         assert "the user's input" in result
@@ -101,29 +109,127 @@ class TestCodexFrontmatterPruning:
         assert result == {"name": "test", "description": "A test skill"}
 
     def test_strips_unknown_fields(self):
-        fm = {"name": "test", "description": "desc", "license": "MIT", "custom": "value"}
+        fm = {
+            "name": "test",
+            "description": "desc",
+            "license": "MIT",
+            "custom": "value",
+        }
         result = prune_frontmatter_for_codex(fm)
         assert result == {"name": "test", "description": "desc"}
 
     def test_keeps_metadata(self):
-        fm = {"name": "test", "description": "desc", "metadata": {"short-description": "short"}}
+        fm = {
+            "name": "test",
+            "description": "desc",
+            "metadata": {"short-description": "short"},
+        }
         result = prune_frontmatter_for_codex(fm)
-        assert result == {"name": "test", "description": "desc", "metadata": {"short-description": "short"}}
+        assert result == {
+            "name": "test",
+            "description": "desc",
+            "metadata": {"short-description": "short"},
+        }
 
     def test_truncates_long_description(self):
         fm = {"name": "test", "description": "x" * 1100}
         result = prune_frontmatter_for_codex(fm)
+        assert isinstance(result["description"], str)
         assert len(result["description"]) == 1024
 
     def test_truncates_long_name(self):
         fm = {"name": "a" * 100, "description": "desc"}
         result = prune_frontmatter_for_codex(fm)
+        assert isinstance(result["name"], str)
         assert len(result["name"]) == 64
 
     def test_preserves_short_description(self):
         fm = {"name": "test", "description": "short"}
         result = prune_frontmatter_for_codex(fm)
         assert result["description"] == "short"
+
+
+class TestPiTransforms:
+    """Test Claude/Gemini to Pi conversion (content is identical to Claude)."""
+
+    def test_claude_to_pi_content_unchanged(self):
+        content = 'Run !`echo "hello"` with $ARGUMENTS and @README.md'
+        assert convert(content, Format.PI) == content
+
+    def test_gemini_to_pi_converts_syntax(self):
+        assert convert('!{echo "hello"}', Format.PI) == '!`echo "hello"`'
+        assert convert("use {{args}} here", Format.PI) == "use $ARGUMENTS here"
+        assert (
+            convert("see @{README.md} for info", Format.PI) == "see @README.md for info"
+        )
+
+    def test_pi_preserves_code_blocks_from_claude(self):
+        content = """Outside: $ARGUMENTS
+
+```bash
+# Inside: $ARGUMENTS should NOT change
+```
+
+Outside again: $ARGUMENTS
+"""
+        result = convert_preserving_code_blocks(content, Format.PI)
+        assert result == content  # No changes when source is already Claude/Pi syntax
+
+    def test_pi_converts_gemini_source(self):
+        content = "Execute !{echo hello} with {{args}} and @{README.md}"
+        result = convert_preserving_code_blocks(content, Format.PI)
+        assert "!`echo hello`" in result
+        assert "$ARGUMENTS" in result
+        assert "@README.md" in result
+        assert "!{" not in result
+        assert "{{args}}" not in result
+
+
+class TestPiFrontmatterPruning:
+    """Test frontmatter pruning for Pi CLI."""
+
+    def test_keeps_only_pi_fields(self):
+        fm = {
+            "name": "test",
+            "description": "A test skill",
+            "argument-hint": "[file]",
+            "allowed-tools": "Read, Write",
+            "model": "sonnet",
+            "context": "fork",
+            "agent": "Explore",
+            "hooks": {},
+            "disable-model-invocation": True,
+            "user-invocable": False,
+        }
+        result = prune_frontmatter_for_pi(fm)
+        assert result == {
+            "name": "test",
+            "description": "A test skill",
+            "disable-model-invocation": True,
+        }
+
+    def test_strips_unknown_fields(self):
+        fm = {
+            "name": "test",
+            "description": "desc",
+            "license": "MIT",
+            "custom": "value",
+        }
+        result = prune_frontmatter_for_pi(fm)
+        assert result == {"name": "test", "description": "desc"}
+
+    def test_keeps_disable_model_invocation(self):
+        fm = {"name": "test", "description": "desc", "disable-model-invocation": True}
+        result = prune_frontmatter_for_pi(fm)
+        assert result["disable-model-invocation"] is True
+
+    def test_no_truncation(self):
+        fm = {"name": "a" * 200, "description": "x" * 2000}
+        result = prune_frontmatter_for_pi(fm)
+        assert isinstance(result["name"], str)
+        assert isinstance(result["description"], str)
+        assert len(result["name"]) == 200
+        assert len(result["description"]) == 2000
 
 
 class TestCodeBlockProtection:
@@ -248,6 +354,12 @@ class TestFixtureFiles:
         expected = parse_file(FIXTURES / "codex_skill.md")
         result = convert_preserving_code_blocks(skill.content, Format.CODEX)
         assert result.strip() == expected.content.strip()
+
+    def test_pi_fixture_content_matches_claude(self):
+        claude_skill = parse_file(FIXTURES / "claude_skill.md")
+        pi_skill = parse_file(FIXTURES / "pi_skill.md")
+        result = convert_preserving_code_blocks(claude_skill.content, Format.PI)
+        assert result.strip() == pi_skill.content.strip()
 
     def test_roundtrip_claude_to_gemini_to_claude(self):
         skill = parse_file(FIXTURES / "claude_skill.md")
@@ -586,6 +698,45 @@ Plain body with no directives.
         assert "allowed-tools" not in output
         assert "model" not in output
         assert "name: test-skill" in output
+
+    def test_pi_conversion_prunes_frontmatter(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: A test skill
+allowed-tools: Read, Write, Bash(git:*)
+argument-hint: "[file]"
+model: sonnet
+disable-model-invocation: true
+---
+
+Use $ARGUMENTS to do things.
+"""
+        )
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "pi", "-o", str(output_dir / "SKILL.md")]
+        )
+        assert result.exit_code == 0
+
+        output = (output_dir / "SKILL.md").read_text()
+        assert "allowed-tools" not in output
+        assert "argument-hint" not in output
+        assert "model: sonnet" not in output
+        assert "name: test-skill" in output
+        assert "description: A test skill" in output
+        assert "disable-model-invocation" in output
+        # Content unchanged (Pi uses same syntax as Claude)
+        assert "$ARGUMENTS" in output
 
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner

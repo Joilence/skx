@@ -1,4 +1,4 @@
-"""CLI for skx: Agent Skill format conversion."""
+"""CLI for skx: Agent Skill format conversion (Claude Code, Gemini CLI, Codex CLI, Pi CLI)."""
 
 import sys
 from difflib import unified_diff
@@ -13,7 +13,10 @@ from skx.transforms import (
     Format,
     convert_preserving_code_blocks,
     detect_format,
+    ensure_pi_frontmatter,
     prune_frontmatter_for_codex,
+    prune_frontmatter_for_pi,
+    validate_for_pi,
 )
 from skx.writer import compute_output_path, find_skill_files, write_file, write_in_place
 
@@ -28,6 +31,8 @@ def get_target_format(to: str, content: str) -> Format:
         return Format.GEMINI
     if to == "codex":
         return Format.CODEX
+    if to == "pi":
+        return Format.PI
 
     # auto: detect current format and convert to opposite
     detected = detect_format(content)
@@ -47,10 +52,26 @@ def process_file(
     dry_run: bool,
 ) -> bool:
     """Process a single skill file. Returns True if changes were made."""
+    if target == Format.PI:
+        parent_dir = skill.path.parent.name
+        skill.frontmatter, generated = ensure_pi_frontmatter(
+            skill.frontmatter,
+            skill.content,
+            parent_dir,
+        )
+        if generated:
+            console.print(
+                f"[yellow]Auto-generated {', '.join(generated)} for {skill.path}[/yellow]"
+            )
+        for w in validate_for_pi(skill.frontmatter, parent_dir):
+            console.print(f"[yellow]Warning: {skill.path}: {w}[/yellow]")
+
     original_output = skill.to_string()
 
     if target == Format.CODEX:
         skill.frontmatter = prune_frontmatter_for_codex(skill.frontmatter)
+    elif target == Format.PI:
+        skill.frontmatter = prune_frontmatter_for_pi(skill.frontmatter)
 
     skill.content = convert_preserving_code_blocks(skill.content, target)
 
@@ -93,7 +114,7 @@ def process_file(
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False)
 @click.option(
     "--to",
-    type=click.Choice(["claude", "gemini", "codex", "auto"]),
+    type=click.Choice(["claude", "gemini", "codex", "pi", "auto"]),
     default="auto",
     help="Target format. 'auto' detects current format and converts to opposite.",
 )
@@ -124,7 +145,7 @@ def main(
     in_place: bool,
     dry_run: bool,
 ) -> None:
-    """Convert SKILL.md files between Claude Code, Gemini CLI, and Codex CLI formats.
+    """Convert SKILL.md files between Claude Code, Gemini CLI, Codex CLI, and Pi CLI formats.
 
     PATH can be a single SKILL.md file or a directory containing skill files.
 
@@ -136,6 +157,8 @@ def main(
         skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
         # Convert to Codex CLI format (strips Claude-specific frontmatter)
         skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
+        # Convert to Pi CLI format (strips Claude-specific frontmatter)
+        skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
         # In-place conversion (with backup)
         skx ./SKILL.md --to gemini --in-place
         # Dry run (show diff)

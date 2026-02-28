@@ -1,7 +1,10 @@
-"""Transform rules for converting between Claude Code, Gemini CLI, and Codex CLI skill syntax."""
+"""Transform rules for converting between Claude Code, Gemini CLI, Codex CLI, and Pi CLI skill syntax."""
 
 import re
+from collections.abc import Mapping
 from enum import Enum
+
+from skx.parser import FrontmatterValue
 
 
 class Format(Enum):
@@ -10,6 +13,7 @@ class Format(Enum):
     CLAUDE = "claude"
     GEMINI = "gemini"
     CODEX = "codex"
+    PI = "pi"
 
 
 # Conversion rules: (pattern, replacement)
@@ -43,10 +47,14 @@ CODEX_KEEP_FRONTMATTER = {"name", "description", "metadata"}
 CODEX_NAME_MAX_LENGTH = 64
 CODEX_DESCRIPTION_MAX_LENGTH = 1024
 
+# Pi CLI SKILL.md only reads these frontmatter fields.
+# Source: badlogic/pi-mono packages/coding-agent/src/core/skills.ts SkillFrontmatter interface
+PI_KEEP_FRONTMATTER = {"name", "description", "disable-model-invocation"}
+
 
 def prune_frontmatter_for_codex(
-    frontmatter: dict[str, object],
-) -> dict[str, object]:
+    frontmatter: Mapping[str, FrontmatterValue],
+) -> dict[str, FrontmatterValue]:
     """Keep only Codex-supported frontmatter fields.
 
     Codex CLI recognizes: name, description, metadata (with short-description).
@@ -62,6 +70,80 @@ def prune_frontmatter_for_codex(
         if len(desc) > CODEX_DESCRIPTION_MAX_LENGTH:
             pruned["description"] = desc[:CODEX_DESCRIPTION_MAX_LENGTH]
     return pruned
+
+
+def prune_frontmatter_for_pi(
+    frontmatter: Mapping[str, FrontmatterValue],
+) -> dict[str, FrontmatterValue]:
+    """Keep only Pi CLI-supported frontmatter fields.
+
+    Pi CLI reads: name, description, disable-model-invocation.
+    All other fields are silently ignored by Pi, so we strip them.
+    Unlike Codex, Pi has no length limits on name or description.
+    """
+    return {k: v for k, v in frontmatter.items() if k in PI_KEEP_FRONTMATTER}
+
+
+def validate_for_pi(
+    frontmatter: Mapping[str, FrontmatterValue],
+    parent_dir: str,
+) -> list[str]:
+    """Validate a skill meets Pi CLI requirements.
+
+    Returns a list of warning messages. Empty list means valid.
+    Pi requires 'description' and expects 'name' to match the parent directory.
+    """
+    warnings: list[str] = []
+    name = frontmatter.get("name")
+    if isinstance(name, str) and name != parent_dir:
+        warnings.append(f"name '{name}' does not match directory '{parent_dir}'")
+    return warnings
+
+
+def ensure_pi_frontmatter(
+    frontmatter: Mapping[str, FrontmatterValue],
+    content: str,
+    parent_dir: str,
+) -> tuple[dict[str, FrontmatterValue], list[str]]:
+    """Ensure frontmatter meets Pi CLI requirements, adding defaults as needed.
+
+    Pi requires 'description'. If missing, derives one from:
+    1. First markdown heading in content
+    2. First non-empty line of content
+    3. Directory name as fallback
+
+    Returns (updated frontmatter, list of fields that were auto-generated).
+    """
+    generated: list[str] = []
+    fm = dict(frontmatter)
+
+    if not fm.get("description") or (
+        isinstance(fm["description"], str) and not fm["description"].strip()
+    ):
+        desc = _derive_description(content, parent_dir)
+        fm["description"] = desc
+        generated.append("description")
+
+    if "name" not in fm:
+        fm["name"] = parent_dir
+        generated.append("name")
+
+    return fm, generated
+
+
+def _derive_description(content: str, parent_dir: str) -> str:
+    """Derive a description from skill content or directory name."""
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Use first heading text
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+        # Use first non-empty line (truncate if long)
+        return line[:200]
+    # Fallback: humanize the directory name
+    return parent_dir.replace("-", " ").capitalize()
 
 
 def detect_format(content: str) -> Format | None:
@@ -103,7 +185,8 @@ def convert(content: str, target: Format) -> str:
 
     Does not preserve code blocks. Use convert_preserving_code_blocks for that.
     """
-    if target == Format.CLAUDE:
+    if target in (Format.CLAUDE, Format.PI):
+        # Pi uses identical content syntax to Claude
         rules = GEMINI_TO_CLAUDE
     elif target == Format.CODEX:
         rules = CLAUDE_TO_CODEX
@@ -122,6 +205,10 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     """
     # Codex rules assume Claude source. Convert Gemini->Claude first if needed.
     if target == Format.CODEX and detect_format(content) == Format.GEMINI:
+        content = convert_preserving_code_blocks(content, Format.CLAUDE)
+
+    # Pi uses identical syntax to Claude. Convert Gemini->Claude first if needed.
+    if target == Format.PI and detect_format(content) == Format.GEMINI:
         content = convert_preserving_code_blocks(content, Format.CLAUDE)
 
     code_blocks: list[str] = []
@@ -144,7 +231,8 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     elif target == Format.GEMINI:
         protected = re.sub(r"!`([^`]+)`", r"!{\1}", protected)
         protected = re.sub(r"\$ARGUMENTS", r"{{args}}", protected)
-    elif target == Format.CLAUDE:
+    elif target in (Format.CLAUDE, Format.PI):
+        # Pi uses identical content syntax to Claude
         protected = re.sub(r"!\{([^}]+)\}", r"!`\1`", protected)
         protected = re.sub(r"\{\{args\}\}", r"$ARGUMENTS", protected)
     else:
@@ -156,7 +244,7 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     # Apply remaining transforms (file references only)
     if target == Format.CODEX:
         rules = CLAUDE_TO_CODEX[4:]  # @file -> file only
-    elif target == Format.CLAUDE:
+    elif target in (Format.CLAUDE, Format.PI):
         rules = GEMINI_TO_CLAUDE[2:]
     elif target == Format.GEMINI:
         rules = CLAUDE_TO_GEMINI[2:]
