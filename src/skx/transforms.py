@@ -41,6 +41,10 @@ CLAUDE_TO_CODEX: list[tuple[str, str]] = [
     (r"@([a-zA-Z0-9._/-]+)(?=[\s\]\)\},:;]|$)", r"\1"),  # @file -> file
 ]
 
+# Gemini CLI SKILL.md only reads these frontmatter fields.
+# Source: https://geminicli.com/docs/cli/skills/ — "Do not include any other fields."
+GEMINI_KEEP_FRONTMATTER = {"name", "description"}
+
 # Codex CLI SKILL.md only supports these frontmatter fields.
 # Source: openai/codex codex-rs/core/src/skills/loader.rs SkillFrontmatter struct
 CODEX_KEEP_FRONTMATTER = {"name", "description", "metadata"}
@@ -50,6 +54,45 @@ CODEX_DESCRIPTION_MAX_LENGTH = 1024
 # Pi CLI SKILL.md only reads these frontmatter fields.
 # Source: badlogic/pi-mono packages/coding-agent/src/core/skills.ts SkillFrontmatter interface
 PI_KEEP_FRONTMATTER = {"name", "description", "disable-model-invocation"}
+
+
+def prune_frontmatter_for_gemini(
+    frontmatter: Mapping[str, FrontmatterValue],
+) -> dict[str, FrontmatterValue]:
+    """Keep only Gemini CLI-supported frontmatter fields.
+
+    Gemini CLI reads only: name, description.
+    All other fields are stripped.
+    """
+    return {k: v for k, v in frontmatter.items() if k in GEMINI_KEEP_FRONTMATTER}
+
+
+def ensure_gemini_frontmatter(
+    frontmatter: Mapping[str, FrontmatterValue],
+    content: str,
+    parent_dir: str,
+) -> tuple[dict[str, FrontmatterValue], list[str]]:
+    """Ensure frontmatter meets Gemini CLI requirements, adding defaults as needed.
+
+    Gemini requires 'description' for skill activation. If missing, derives one
+    from content. Also ensures 'name' is present.
+
+    Returns (updated frontmatter, list of fields that were auto-generated).
+    """
+    generated: list[str] = []
+    fm = dict(frontmatter)
+
+    if not fm.get("description") or (
+        isinstance(fm["description"], str) and not fm["description"].strip()
+    ):
+        fm["description"] = _derive_description(content, parent_dir)
+        generated.append("description")
+
+    if "name" not in fm:
+        fm["name"] = parent_dir
+        generated.append("name")
+
+    return fm, generated
 
 
 def prune_frontmatter_for_codex(

@@ -1,13 +1,13 @@
 # skx
 
-Convert SKILL.md files between Claude Code, Gemini CLI, and Codex CLI formats.
+Convert SKILL.md files between Claude Code, Gemini CLI, Codex CLI, and Pi CLI formats.
 
 ```bash
 > skx --help
 Usage: skx [OPTIONS] [PATH]
 
-  Convert SKILL.md files between Claude Code, Gemini CLI, and Codex CLI
-  formats.
+  Convert SKILL.md files between Claude Code, Gemini CLI, Codex CLI, and Pi
+  CLI formats.
 
   PATH can be a single SKILL.md file or a directory containing skill files.
 
@@ -18,6 +18,8 @@ Usage: skx [OPTIONS] [PATH]
       skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
       # Convert to Codex CLI format (strips Claude-specific frontmatter)
       skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
+      # Convert to Pi CLI format (strips Claude-specific frontmatter)
+      skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
       # In-place conversion (with backup)
       skx ./SKILL.md --to gemini --in-place
       # Dry run (show diff)
@@ -26,7 +28,7 @@ Usage: skx [OPTIONS] [PATH]
       skx ./SKILL.md --to auto
 
 Options:
-  --to [claude|gemini|codex|auto]
+  --to [claude|gemini|codex|pi|auto]
                              Target format. 'auto' detects current format and
                              converts to opposite.
   -o, --output PATH          Output file or directory. If not specified,

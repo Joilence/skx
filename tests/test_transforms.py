@@ -11,6 +11,7 @@ from skx.transforms import (
     convert_preserving_code_blocks,
     detect_format,
     prune_frontmatter_for_codex,
+    prune_frontmatter_for_gemini,
     prune_frontmatter_for_pi,
 )
 
@@ -46,6 +47,45 @@ class TestBasicTransforms:
             convert("see @{README.md} for info", Format.CLAUDE)
             == "see @README.md for info"
         )
+
+
+class TestGeminiFrontmatterPruning:
+    """Test frontmatter pruning for Gemini CLI."""
+
+    def test_keeps_only_gemini_fields(self):
+        fm = {
+            "name": "test",
+            "description": "A test skill",
+            "argument-hint": "[file]",
+            "allowed-tools": "Read, Write",
+            "model": "sonnet",
+            "context": "fork",
+            "agent": "Explore",
+            "hooks": {},
+            "disable-model-invocation": True,
+            "user-invocable": False,
+        }
+        result = prune_frontmatter_for_gemini(fm)
+        assert result == {"name": "test", "description": "A test skill"}
+
+    def test_strips_unknown_fields(self):
+        fm = {
+            "name": "test",
+            "description": "desc",
+            "license": "MIT",
+            "metadata": {"short-description": "short"},
+            "custom": "value",
+        }
+        result = prune_frontmatter_for_gemini(fm)
+        assert result == {"name": "test", "description": "desc"}
+
+    def test_no_truncation(self):
+        fm = {"name": "a" * 200, "description": "x" * 2000}
+        result = prune_frontmatter_for_gemini(fm)
+        assert isinstance(result["name"], str)
+        assert isinstance(result["description"], str)
+        assert len(result["name"]) == 200
+        assert len(result["description"]) == 2000
 
 
 class TestClaudeToCodexTransforms:
@@ -737,6 +777,44 @@ Use $ARGUMENTS to do things.
         assert "disable-model-invocation" in output
         # Content unchanged (Pi uses same syntax as Claude)
         assert "$ARGUMENTS" in output
+
+    def test_gemini_conversion_prunes_frontmatter(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: A test skill
+allowed-tools: Read, Write, Bash(git:*)
+argument-hint: "[file]"
+model: sonnet
+disable-model-invocation: true
+---
+
+Use $ARGUMENTS to do things.
+"""
+        )
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "gemini", "-o", str(output_dir / "SKILL.md")]
+        )
+        assert result.exit_code == 0
+
+        output = (output_dir / "SKILL.md").read_text()
+        assert "allowed-tools" not in output
+        assert "argument-hint" not in output
+        assert "model: sonnet" not in output
+        assert "disable-model-invocation" not in output
+        assert "name: test-skill" in output
+        assert "description: A test skill" in output
+        assert "{{args}}" in output
 
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner

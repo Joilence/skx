@@ -14,8 +14,10 @@ from skx.transforms import (
     convert_preserving_code_blocks,
     detect_format,
     ensure_codex_frontmatter,
+    ensure_gemini_frontmatter,
     ensure_pi_frontmatter,
     prune_frontmatter_for_codex,
+    prune_frontmatter_for_gemini,
     prune_frontmatter_for_pi,
     validate_for_pi,
 )
@@ -53,9 +55,15 @@ def process_file(
     dry_run: bool,
 ) -> bool:
     """Process a single skill file. Returns True if changes were made."""
-    if target in (Format.CODEX, Format.PI):
+    if target in (Format.GEMINI, Format.CODEX, Format.PI):
         parent_dir = skill.path.parent.name
-        if target == Format.CODEX:
+        if target == Format.GEMINI:
+            skill.frontmatter, generated = ensure_gemini_frontmatter(
+                skill.frontmatter,
+                skill.content,
+                parent_dir,
+            )
+        elif target == Format.CODEX:
             skill.frontmatter, generated = ensure_codex_frontmatter(
                 skill.frontmatter,
                 skill.content,
@@ -77,7 +85,9 @@ def process_file(
 
     original_output = skill.to_string()
 
-    if target == Format.CODEX:
+    if target == Format.GEMINI:
+        skill.frontmatter = prune_frontmatter_for_gemini(skill.frontmatter)
+    elif target == Format.CODEX:
         skill.frontmatter = prune_frontmatter_for_codex(skill.frontmatter)
     elif target == Format.PI:
         skill.frontmatter = prune_frontmatter_for_pi(skill.frontmatter)
