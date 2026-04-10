@@ -100,6 +100,41 @@ def validate_for_pi(
     return warnings
 
 
+def ensure_codex_frontmatter(
+    frontmatter: Mapping[str, FrontmatterValue],
+    content: str,
+    parent_dir: str,
+) -> tuple[dict[str, FrontmatterValue], list[str]]:
+    """Ensure frontmatter meets Codex CLI requirements, adding defaults as needed.
+
+    Codex requires 'description'. If missing, derives one from content.
+    Also ensures 'name' is present, using parent directory as fallback.
+    Truncates to Codex length limits.
+
+    Returns (updated frontmatter, list of fields that were auto-generated).
+    """
+    generated: list[str] = []
+    fm = dict(frontmatter)
+
+    if not fm.get("description") or (
+        isinstance(fm["description"], str) and not fm["description"].strip()
+    ):
+        desc = _derive_description(content, parent_dir)
+        if len(desc) > CODEX_DESCRIPTION_MAX_LENGTH:
+            desc = desc[:CODEX_DESCRIPTION_MAX_LENGTH]
+        fm["description"] = desc
+        generated.append("description")
+
+    if "name" not in fm:
+        name = parent_dir
+        if len(name) > CODEX_NAME_MAX_LENGTH:
+            name = name[:CODEX_NAME_MAX_LENGTH]
+        fm["name"] = name
+        generated.append("name")
+
+    return fm, generated
+
+
 def ensure_pi_frontmatter(
     frontmatter: Mapping[str, FrontmatterValue],
     content: str,

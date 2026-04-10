@@ -13,6 +13,7 @@ from skx.transforms import (
     Format,
     convert_preserving_code_blocks,
     detect_format,
+    ensure_codex_frontmatter,
     ensure_pi_frontmatter,
     prune_frontmatter_for_codex,
     prune_frontmatter_for_pi,
@@ -52,19 +53,27 @@ def process_file(
     dry_run: bool,
 ) -> bool:
     """Process a single skill file. Returns True if changes were made."""
-    if target == Format.PI:
+    if target in (Format.CODEX, Format.PI):
         parent_dir = skill.path.parent.name
-        skill.frontmatter, generated = ensure_pi_frontmatter(
-            skill.frontmatter,
-            skill.content,
-            parent_dir,
-        )
+        if target == Format.CODEX:
+            skill.frontmatter, generated = ensure_codex_frontmatter(
+                skill.frontmatter,
+                skill.content,
+                parent_dir,
+            )
+        else:
+            skill.frontmatter, generated = ensure_pi_frontmatter(
+                skill.frontmatter,
+                skill.content,
+                parent_dir,
+            )
         if generated:
             console.print(
                 f"[yellow]Auto-generated {', '.join(generated)} for {skill.path}[/yellow]"
             )
-        for w in validate_for_pi(skill.frontmatter, parent_dir):
-            console.print(f"[yellow]Warning: {skill.path}: {w}[/yellow]")
+        if target == Format.PI:
+            for w in validate_for_pi(skill.frontmatter, parent_dir):
+                console.print(f"[yellow]Warning: {skill.path}: {w}[/yellow]")
 
     original_output = skill.to_string()
 
