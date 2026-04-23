@@ -1052,6 +1052,106 @@ Use $ARGUMENTS to do things.
         # Normal skill synced
         assert (out / "normal" / "SKILL.md").exists()
 
+    def test_codex_bundled_ignore_protects_system_skills(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "user-skill").mkdir()
+        (src / "user-skill" / "SKILL.md").write_text(
+            "---\nname: user-skill\ndescription: d\n---\n\nBody.\n"
+        )
+
+        out = tmp_path / "codex-out"
+        # Simulate Codex-bundled skills at protected paths
+        (out / ".system" / "skill-creator").mkdir(parents=True)
+        (out / ".system" / "skill-creator" / "SKILL.md").write_text(
+            "---\nname: skill-creator\ndescription: bundled\n---\n\nBundled.\n"
+        )
+        (out / "codex-primary-runtime" / "slides").mkdir(parents=True)
+        (out / "codex-primary-runtime" / "slides" / "SKILL.md").write_text(
+            "---\nname: PowerPoint\ndescription: bundled\n---\n\nBundled.\n"
+        )
+        # A regular orphan that should be deleted
+        (out / "legacy").mkdir()
+        (out / "legacy" / "SKILL.md").write_text(
+            "---\nname: legacy\ndescription: d\n---\n\nBody.\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "codex", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 0
+        # Bundled skills preserved
+        assert (out / ".system" / "skill-creator" / "SKILL.md").exists()
+        assert (out / "codex-primary-runtime" / "slides" / "SKILL.md").exists()
+        # Orphan deleted
+        assert not (out / "legacy" / "SKILL.md").exists()
+
+    def test_plannotator_compound_protected_by_default(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "plannotator-compound").mkdir()
+        src_content = (
+            "---\nname: plannotator-compound\ndescription: stale source\n"
+            "---\n\nStale source body.\n"
+        )
+        (src / "plannotator-compound" / "SKILL.md").write_text(src_content)
+
+        out = tmp_path / "out"
+        (out / "plannotator-compound").mkdir(parents=True)
+        live_content = (
+            "---\nname: plannotator-compound\ndescription: live from plannotator\n"
+            "---\n\nLive body.\n"
+        )
+        (out / "plannotator-compound" / "SKILL.md").write_text(live_content)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "pi", "-o", str(out)]
+        )
+        assert result.exit_code == 0
+        # Live version NOT overwritten
+        assert (out / "plannotator-compound" / "SKILL.md").read_text() == live_content
+        assert "Skipping externally-managed" in result.output
+
+    def test_default_output_path_used_when_not_specified(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        # Reimport so DEFAULT_OUTPUT_PATHS picks up the new HOME
+        import importlib
+
+        import skx.writer as writer_module
+
+        importlib.reload(writer_module)
+        import skx.cli as cli_module
+
+        importlib.reload(cli_module)
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "sample").mkdir()
+        (src / "sample" / "SKILL.md").write_text(
+            "---\nname: sample\ndescription: d\n---\n\n$ARGUMENTS\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli_module.main, [str(src), "--to", "gemini"])
+        assert result.exit_code == 0
+        expected_out = fake_home / ".gemini" / "skills" / "sample" / "SKILL.md"
+        assert expected_out.exists()
+        assert "Writing to default output" in result.output
+
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner
 

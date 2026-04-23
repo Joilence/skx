@@ -14,14 +14,14 @@ Usage: skx [OPTIONS] [PATH]
   Examples:
       # Convert single file (auto-detect format)
       skx ./my-skill/SKILL.md --to gemini --output ./converted/
-      # Convert directory of skills
-      skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
-      # Convert to Codex CLI format (strips Claude-specific frontmatter)
-      skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
-      # Convert to Pi CLI format (strips Claude-specific frontmatter)
-      skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
+      # Convert directory of skills (uses default output path per target)
+      skx ~/.claude/skills --to gemini
+      skx ~/.claude/skills --to codex
+      skx ~/.claude/skills --to pi
       # Sync: convert and remove SKILL.md files in output that no longer exist in source
-      skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/ --delete
+      skx ~/.claude/skills --to pi --delete
+      # Override default output path
+      skx ~/.claude/skills --to gemini --output /tmp/gemini-skills
       # In-place conversion (with backup)
       skx ./SKILL.md --to gemini --in-place
       # Dry run (show diff)
@@ -57,17 +57,35 @@ skx --help
 uvx --from git+https://github.com/Joilence/skx skx --help
 ```
 
+### Default output paths
+
+When input is a directory and `--output` is omitted, skx writes to a
+conventional path per target:
+
+| Target | Default output |
+|---|---|
+| `claude` | `~/.claude/skills` |
+| `gemini` | `~/.gemini/skills` |
+| `codex` | `~/.codex/skills` |
+| `pi` | `~/.pi/agent/skills` |
+
+Pass `--output` to override.
+
 ### Exempting externally-maintained skills
 
-Drop a `.skxignore` file at the root of your output directory to mark skills
-that are maintained by other tools. Matched paths are never overwritten and
-never deleted by `--delete`. Patterns use [gitignore syntax](https://git-scm.com/docs/gitignore).
+Some skills are maintained by other tools and must never be overwritten or
+deleted by sync. skx has **built-in protection** for known bundled paths:
+
+| Target | Bundled exemptions |
+|---|---|
+| `codex` | `.system/**`, `codex-primary-runtime/**` |
+| all targets | `plannotator-compound` |
+
+To add your own exemptions, drop a `.skxignore` file at the root of your
+output directory. Patterns use [gitignore syntax](https://git-scm.com/docs/gitignore).
 
 ```bash
 # ~/.pi/agent/skills/.skxignore
-# Managed by plannotator itself
-plannotator-compound
-
 # Everything in this subtree is externally sourced
 external/**
 ```

@@ -23,10 +23,11 @@ from skx.transforms import (
 )
 from skx.writer import (
     compute_output_path,
+    default_output_path,
     delete_orphan_skill,
     find_orphan_skills,
     find_skill_files,
-    load_skxignore,
+    load_ignore_spec,
     write_file,
     write_in_place,
 )
@@ -34,16 +35,24 @@ from skx.writer import (
 console = Console()
 
 
+_EXPLICIT_TARGETS: dict[str, Format] = {
+    "claude": Format.CLAUDE,
+    "gemini": Format.GEMINI,
+    "codex": Format.CODEX,
+    "pi": Format.PI,
+}
+
+
+def explicit_target_format(to: str) -> Format | None:
+    """Return the Format for an explicit --to value, or None for 'auto'."""
+    return _EXPLICIT_TARGETS.get(to)
+
+
 def get_target_format(to: str, content: str) -> Format:
     """Determine target format from --to option."""
-    if to == "claude":
-        return Format.CLAUDE
-    if to == "gemini":
-        return Format.GEMINI
-    if to == "codex":
-        return Format.CODEX
-    if to == "pi":
-        return Format.PI
+    explicit = explicit_target_format(to)
+    if explicit is not None:
+        return explicit
 
     # auto: detect current format and convert to opposite
     detected = detect_format(content)
@@ -187,14 +196,14 @@ def main(
     Examples:
         # Convert single file (auto-detect format)
         skx ./my-skill/SKILL.md --to gemini --output ./converted/
-        # Convert directory of skills
-        skx ~/.claude/skills/ --to gemini --output ~/.gemini/skills/
-        # Convert to Codex CLI format (strips Claude-specific frontmatter)
-        skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
-        # Convert to Pi CLI format (strips Claude-specific frontmatter)
-        skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
+        # Convert directory of skills (uses default output path per target)
+        skx ~/.claude/skills --to gemini
+        skx ~/.claude/skills --to codex
+        skx ~/.claude/skills --to pi
         # Sync: convert and remove SKILL.md files in output that no longer exist in source
-        skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/ --delete
+        skx ~/.claude/skills --to pi --delete
+        # Override default output path
+        skx ~/.claude/skills --to gemini --output /tmp/gemini-skills
         # In-place conversion (with backup)
         skx ./SKILL.md --to gemini --in-place
         # Dry run (show diff)
@@ -209,6 +218,11 @@ def main(
     if in_place and output:
         console.print("[red]Error: Cannot use --in-place with --output[/red]")
         sys.exit(1)
+
+    explicit = explicit_target_format(to)
+    if path.is_dir() and output is None and not in_place and explicit is not None:
+        output = default_output_path(explicit)
+        console.print(f"[dim]Writing to default output: {output}[/dim]")
 
     if delete and (not output or not path.is_dir()):
         console.print(
@@ -236,7 +250,8 @@ def main(
             sys.exit(0)
 
         console.print(f"Found {len(skill_files)} skill file(s)")
-        ignore = load_skxignore(output) if output else None
+        ignore_target = explicit if explicit is not None else Format.CLAUDE
+        ignore = load_ignore_spec(output, ignore_target) if output else None
         changed = 0
         errors = 0
         for skill_path in skill_files:

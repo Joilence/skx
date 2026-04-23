@@ -7,8 +7,40 @@ from pathspec import GitIgnoreSpec
 from send2trash import send2trash
 
 from skx.parser import SkillFile
+from skx.transforms import Format
 
 SKXIGNORE_FILENAME = ".skxignore"
+
+# Bundled skills that each agent ships with. Syncing Claude source over them
+# would delete or corrupt tool-provided skills.
+BUNDLED_IGNORE_PATTERNS: dict[Format, list[str]] = {
+    Format.CLAUDE: [],
+    Format.GEMINI: [],
+    Format.CODEX: [
+        ".system/**",
+        "codex-primary-runtime/**",
+    ],
+    Format.PI: [],
+}
+
+# Patterns that apply to every target (externally-maintained third-party skills).
+COMMON_IGNORE_PATTERNS: list[str] = [
+    # Maintained by the Plannotator tool itself.
+    "plannotator-compound",
+]
+
+# Conventional output directories per target. Users can still override via --output.
+DEFAULT_OUTPUT_PATHS: dict[Format, Path] = {
+    Format.CLAUDE: Path.home() / ".claude" / "skills",
+    Format.GEMINI: Path.home() / ".gemini" / "skills",
+    Format.CODEX: Path.home() / ".codex" / "skills",
+    Format.PI: Path.home() / ".pi" / "agent" / "skills",
+}
+
+
+def default_output_path(target: Format) -> Path:
+    """Return the conventional output directory for a target format."""
+    return DEFAULT_OUTPUT_PATHS[target]
 
 
 def write_file(skill: SkillFile, output_path: Path) -> None:
@@ -49,16 +81,21 @@ def compute_output_path(input_path: Path, input_base: Path, output_base: Path) -
     return output_base / relative
 
 
-def load_skxignore(output_base: Path) -> GitIgnoreSpec | None:
-    """Load .skxignore from output_base if present.
+def load_ignore_spec(output_base: Path, target: Format) -> GitIgnoreSpec:
+    """Build ignore spec combining bundled defaults, common patterns, and user file.
 
-    Uses gitignore-style patterns (see https://git-scm.com/docs/gitignore).
-    Returns None if the file does not exist.
+    Precedence (additive): bundled target defaults + common patterns + user's
+    ``.skxignore`` at ``output_base`` if present. Bundled patterns protect
+    agent-provided skills (e.g. Codex's ``.system/**``) from being written over
+    or deleted by sync.
     """
-    ignore_file = output_base / SKXIGNORE_FILENAME
-    if not ignore_file.is_file():
-        return None
-    return GitIgnoreSpec.from_lines(ignore_file.read_text().splitlines())
+    lines: list[str] = []
+    lines.extend(BUNDLED_IGNORE_PATTERNS.get(target, []))
+    lines.extend(COMMON_IGNORE_PATTERNS)
+    user_file = output_base / SKXIGNORE_FILENAME
+    if user_file.is_file():
+        lines.extend(user_file.read_text().splitlines())
+    return GitIgnoreSpec.from_lines(lines)
 
 
 def find_orphan_skills(
