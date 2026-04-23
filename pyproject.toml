@@ -8,6 +8,7 @@ dependencies = [
     "click>=8.0",
     "python-frontmatter>=1.1.0",
     "rich>=13.0",
+    "send2trash>=2.1.0",
 ]
 
 [dependency-groups]

@@ -20,6 +20,8 @@ Usage: skx [OPTIONS] [PATH]
       skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
       # Convert to Pi CLI format (strips Claude-specific frontmatter)
       skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
+      # Sync: convert and remove SKILL.md files in output that no longer exist in source
+      skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/ --delete
       # In-place conversion (with backup)
       skx ./SKILL.md --to gemini --in-place
       # Dry run (show diff)
@@ -35,6 +37,10 @@ Options:
                              prints to stdout.
   -i, --in-place             Modify files in place (creates .bak backup).
   -n, --dry-run              Show diff without writing changes.
+  --delete                   Remove SKILL.md files in --output that have no
+                             corresponding source (rsync-like sync). Sends
+                             orphans to trash. Requires directory input and
+                             --output.
   --help                     Show this message and exit.
 ```
 

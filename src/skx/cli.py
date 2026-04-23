@@ -21,7 +21,14 @@ from skx.transforms import (
     prune_frontmatter_for_pi,
     validate_for_pi,
 )
-from skx.writer import compute_output_path, find_skill_files, write_file, write_in_place
+from skx.writer import (
+    compute_output_path,
+    delete_orphan_skill,
+    find_orphan_skills,
+    find_skill_files,
+    write_file,
+    write_in_place,
+)
 
 console = Console()
 
@@ -155,6 +162,12 @@ def process_file(
     is_flag=True,
     help="Show diff without writing changes.",
 )
+@click.option(
+    "--delete",
+    is_flag=True,
+    help="Remove SKILL.md files in --output that have no corresponding source "
+    "(rsync-like sync). Sends orphans to trash. Requires directory input and --output.",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -163,6 +176,7 @@ def main(
     output: Path | None,
     in_place: bool,
     dry_run: bool,
+    delete: bool,
 ) -> None:
     """Convert SKILL.md files between Claude Code, Gemini CLI, Codex CLI, and Pi CLI formats.
 
@@ -178,6 +192,8 @@ def main(
         skx ~/.claude/skills/ --to codex --output ~/.codex/skills/
         # Convert to Pi CLI format (strips Claude-specific frontmatter)
         skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/
+        # Sync: convert and remove SKILL.md files in output that no longer exist in source
+        skx ~/.claude/skills/ --to pi --output ~/.pi/agent/skills/ --delete
         # In-place conversion (with backup)
         skx ./SKILL.md --to gemini --in-place
         # Dry run (show diff)
@@ -191,6 +207,12 @@ def main(
 
     if in_place and output:
         console.print("[red]Error: Cannot use --in-place with --output[/red]")
+        sys.exit(1)
+
+    if delete and (not output or not path.is_dir()):
+        console.print(
+            "[red]Error: --delete requires a directory input and --output[/red]"
+        )
         sys.exit(1)
 
     if path.is_file():
@@ -241,6 +263,21 @@ def main(
             )
         else:
             console.print(f"\n[bold]{changed}/{total} file(s) changed[/bold]")
+
+        if delete and output:
+            orphans = find_orphan_skills(path, output)
+            if orphans:
+                action = "Would delete" if dry_run else "Deleting"
+                console.print(f"\n[bold yellow]{action} {len(orphans)} orphan(s):[/bold yellow]")
+                for orphan in orphans:
+                    console.print(f"  [yellow]{orphan}[/yellow]")
+                    if not dry_run:
+                        try:
+                            delete_orphan_skill(orphan, output)
+                        except OSError as e:
+                            console.print(f"[red]Error deleting {orphan}: {e}[/red]")
+                            errors += 1
+
         if errors:
             console.print(f"[yellow]{errors} file(s) had errors[/yellow]")
             sys.exit(1)

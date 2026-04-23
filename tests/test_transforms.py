@@ -816,6 +816,121 @@ Use $ARGUMENTS to do things.
         assert "description: A test skill" in output
         assert "{{args}}" in output
 
+    def test_delete_removes_orphan_skills(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "keep").mkdir()
+        (src / "keep" / "SKILL.md").write_text(
+            "---\nname: keep\ndescription: stays\n---\n\nBody.\n"
+        )
+
+        out = tmp_path / "out"
+        (out / "keep").mkdir(parents=True)
+        (out / "keep" / "SKILL.md").write_text(
+            "---\nname: keep\ndescription: stays\n---\n\nOld body.\n"
+        )
+        (out / "orphan").mkdir()
+        (out / "orphan" / "SKILL.md").write_text(
+            "---\nname: orphan\ndescription: should be removed\n---\n\nBody.\n"
+        )
+        (out / "nested" / "orphan-nested").mkdir(parents=True)
+        (out / "nested" / "orphan-nested" / "SKILL.md").write_text(
+            "---\nname: orphan-nested\ndescription: also removed\n---\n\nBody.\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 0
+        assert (out / "keep" / "SKILL.md").exists()
+        assert not (out / "orphan" / "SKILL.md").exists()
+        assert not (out / "nested" / "orphan-nested" / "SKILL.md").exists()
+        # Empty parent dirs removed
+        assert not (out / "orphan").exists()
+        assert not (out / "nested").exists()
+
+    def test_delete_preserves_sibling_assets(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+
+        out = tmp_path / "out"
+        (out / "orphan").mkdir(parents=True)
+        (out / "orphan" / "SKILL.md").write_text(
+            "---\nname: orphan\ndescription: d\n---\n\nBody.\n"
+        )
+        (out / "orphan" / "assets").mkdir()
+        (out / "orphan" / "assets" / "logo.png").write_text("fake")
+
+        # Add one valid source file so CLI doesn't exit early
+        (src / "x").mkdir()
+        (src / "x" / "SKILL.md").write_text(
+            "---\nname: x\ndescription: x\n---\n\nBody.\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 0
+        # SKILL.md deleted but assets/ preserved (parent not empty)
+        assert not (out / "orphan" / "SKILL.md").exists()
+        assert (out / "orphan" / "assets" / "logo.png").exists()
+
+    def test_delete_dry_run_does_not_delete(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "x").mkdir()
+        (src / "x" / "SKILL.md").write_text(
+            "---\nname: x\ndescription: x\n---\n\nBody.\n"
+        )
+
+        out = tmp_path / "out"
+        (out / "orphan").mkdir(parents=True)
+        (out / "orphan" / "SKILL.md").write_text(
+            "---\nname: orphan\ndescription: d\n---\n\nBody.\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [str(src), "--to", "gemini", "-o", str(out), "--delete", "--dry-run"],
+        )
+        assert result.exit_code == 0
+        assert "Would delete" in result.output
+        assert (out / "orphan" / "SKILL.md").exists()
+
+    def test_delete_requires_directory_input(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            "---\nname: x\ndescription: x\n---\n\nBody.\n"
+        )
+        out = tmp_path / "out"
+        out.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "gemini", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 1
+        assert "--delete requires" in result.output
+
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner
 

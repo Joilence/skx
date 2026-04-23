@@ -3,6 +3,8 @@
 import shutil
 from pathlib import Path
 
+from send2trash import send2trash
+
 from skx.parser import SkillFile
 
 
@@ -42,3 +44,33 @@ def compute_output_path(input_path: Path, input_base: Path, output_base: Path) -
     """
     relative = input_path.relative_to(input_base)
     return output_base / relative
+
+
+def find_orphan_skills(input_base: Path, output_base: Path) -> list[Path]:
+    """Find SKILL.md files in output that have no corresponding source in input.
+
+    Returns paths of orphan SKILL.md files (not directories). An orphan is any
+    SKILL.md at output_base/<rel> whose mirror input_base/<rel> does not exist.
+    """
+    if not output_base.is_dir():
+        return []
+    orphans: list[Path] = []
+    for skill_file in output_base.rglob("SKILL.md"):
+        relative = skill_file.relative_to(output_base)
+        source = input_base / relative
+        if not source.exists():
+            orphans.append(skill_file)
+    return orphans
+
+
+def delete_orphan_skill(skill_file: Path, output_base: Path) -> None:
+    """Send an orphan SKILL.md to trash; also trash ancestor dirs that become empty.
+
+    Stops climbing at output_base. Preserves non-empty sibling content (assets,
+    scripts, references) that the user may have added outside of skx's scope.
+    """
+    send2trash(str(skill_file))
+    parent = skill_file.parent
+    while parent != output_base and parent.is_dir() and not any(parent.iterdir()):
+        send2trash(str(parent))
+        parent = parent.parent
