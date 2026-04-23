@@ -931,6 +931,127 @@ Use $ARGUMENTS to do things.
         assert result.exit_code == 1
         assert "--delete requires" in result.output
 
+    def test_skxignore_skips_write_and_delete(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        # Source contains two skills; one of them has a same-named external in target
+        (src / "managed").mkdir()
+        (src / "managed" / "SKILL.md").write_text(
+            "---\nname: managed\ndescription: d\n---\n\nBody.\n"
+        )
+        (src / "plannotator-compound").mkdir()
+        (src / "plannotator-compound" / "SKILL.md").write_text(
+            "---\nname: plannotator-compound\ndescription: outdated\n---\n\nOld body.\n"
+        )
+
+        out = tmp_path / "out"
+        out.mkdir()
+        # External skill already exists with distinct content
+        (out / "plannotator-compound").mkdir()
+        external_content = (
+            "---\nname: plannotator-compound\ndescription: externally-maintained\n"
+            "---\n\nLive body from plannotator.\n"
+        )
+        (out / "plannotator-compound" / "SKILL.md").write_text(external_content)
+        # An orphan that also happens to be ignored
+        (out / "external-dir").mkdir()
+        (out / "external-dir" / "SKILL.md").write_text(
+            "---\nname: external-dir\ndescription: d\n---\n\nBody.\n"
+        )
+        # An orphan that is NOT ignored (should get deleted)
+        (out / "legacy").mkdir()
+        (out / "legacy" / "SKILL.md").write_text(
+            "---\nname: legacy\ndescription: d\n---\n\nBody.\n"
+        )
+
+        (out / ".skxignore").write_text(
+            "# Externally maintained\nplannotator-compound\nexternal-dir\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 0
+        # External file was NOT overwritten
+        assert (out / "plannotator-compound" / "SKILL.md").read_text() == external_content
+        # Managed skill was written
+        assert (out / "managed" / "SKILL.md").exists()
+        # Ignored orphan was preserved
+        assert (out / "external-dir" / "SKILL.md").exists()
+        # Non-ignored orphan was deleted
+        assert not (out / "legacy" / "SKILL.md").exists()
+        # Skipping notice in output
+        assert "Skipping externally-managed" in result.output
+
+    def test_skxignore_missing_is_noop(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "x").mkdir()
+        (src / "x" / "SKILL.md").write_text(
+            "---\nname: x\ndescription: x\n---\n\nBody.\n"
+        )
+        out = tmp_path / "out"
+        out.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "gemini", "-o", str(out)]
+        )
+        assert result.exit_code == 0
+        assert (out / "x" / "SKILL.md").exists()
+
+    def test_skxignore_glob_patterns(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "normal").mkdir()
+        (src / "normal" / "SKILL.md").write_text(
+            "---\nname: normal\ndescription: d\n---\n\nBody.\n"
+        )
+        (src / "external-a").mkdir()
+        (src / "external-a" / "SKILL.md").write_text(
+            "---\nname: external-a\ndescription: d\n---\n\nNew.\n"
+        )
+        (src / "external-b").mkdir()
+        (src / "external-b" / "SKILL.md").write_text(
+            "---\nname: external-b\ndescription: d\n---\n\nNew.\n"
+        )
+
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "external-a").mkdir()
+        (out / "external-a" / "SKILL.md").write_text(
+            "---\nname: external-a\ndescription: kept\n---\n\nOld.\n"
+        )
+        (out / "external-b").mkdir()
+        (out / "external-b" / "SKILL.md").write_text(
+            "---\nname: external-b\ndescription: kept\n---\n\nOld.\n"
+        )
+        (out / ".skxignore").write_text("external-*\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "gemini", "-o", str(out)]
+        )
+        assert result.exit_code == 0
+        # Glob matched: external-a and external-b not overwritten
+        assert "Old." in (out / "external-a" / "SKILL.md").read_text()
+        assert "Old." in (out / "external-b" / "SKILL.md").read_text()
+        # Normal skill synced
+        assert (out / "normal" / "SKILL.md").exists()
+
     def test_single_file_error_exits_nonzero(self, tmp_path):
         from click.testing import CliRunner
 

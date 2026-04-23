@@ -57,6 +57,21 @@ skx --help
 uvx --from git+https://github.com/Joilence/skx skx --help
 ```
 
+### Exempting externally-maintained skills
+
+Drop a `.skxignore` file at the root of your output directory to mark skills
+that are maintained by other tools. Matched paths are never overwritten and
+never deleted by `--delete`. Patterns use [gitignore syntax](https://git-scm.com/docs/gitignore).
+
+```bash
+# ~/.pi/agent/skills/.skxignore
+# Managed by plannotator itself
+plannotator-compound
+
+# Everything in this subtree is externally sourced
+external/**
+```
+
 ## Development
 
 Use [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for virtual environment and dependencies:

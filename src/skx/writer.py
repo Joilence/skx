@@ -3,9 +3,12 @@
 import shutil
 from pathlib import Path
 
+from pathspec import GitIgnoreSpec
 from send2trash import send2trash
 
 from skx.parser import SkillFile
+
+SKXIGNORE_FILENAME = ".skxignore"
 
 
 def write_file(skill: SkillFile, output_path: Path) -> None:
@@ -46,17 +49,36 @@ def compute_output_path(input_path: Path, input_base: Path, output_base: Path) -
     return output_base / relative
 
 
-def find_orphan_skills(input_base: Path, output_base: Path) -> list[Path]:
+def load_skxignore(output_base: Path) -> GitIgnoreSpec | None:
+    """Load .skxignore from output_base if present.
+
+    Uses gitignore-style patterns (see https://git-scm.com/docs/gitignore).
+    Returns None if the file does not exist.
+    """
+    ignore_file = output_base / SKXIGNORE_FILENAME
+    if not ignore_file.is_file():
+        return None
+    return GitIgnoreSpec.from_lines(ignore_file.read_text().splitlines())
+
+
+def find_orphan_skills(
+    input_base: Path,
+    output_base: Path,
+    ignore: GitIgnoreSpec | None = None,
+) -> list[Path]:
     """Find SKILL.md files in output that have no corresponding source in input.
 
     Returns paths of orphan SKILL.md files (not directories). An orphan is any
     SKILL.md at output_base/<rel> whose mirror input_base/<rel> does not exist.
+    Paths matched by ``ignore`` are excluded (treated as externally-maintained).
     """
     if not output_base.is_dir():
         return []
     orphans: list[Path] = []
     for skill_file in output_base.rglob("SKILL.md"):
         relative = skill_file.relative_to(output_base)
+        if ignore is not None and ignore.match_file(str(relative)):
+            continue
         source = input_base / relative
         if not source.exists():
             orphans.append(skill_file)

@@ -26,6 +26,7 @@ from skx.writer import (
     delete_orphan_skill,
     find_orphan_skills,
     find_skill_files,
+    load_skxignore,
     write_file,
     write_in_place,
 )
@@ -235,6 +236,7 @@ def main(
             sys.exit(0)
 
         console.print(f"Found {len(skill_files)} skill file(s)")
+        ignore = load_skxignore(output) if output else None
         changed = 0
         errors = 0
         for skill_path in skill_files:
@@ -244,6 +246,13 @@ def main(
                 out_path = (
                     compute_output_path(skill_path, path, output) if output else None
                 )
+                if ignore is not None and out_path is not None and output is not None:
+                    rel = out_path.relative_to(output)
+                    if ignore.match_file(str(rel)):
+                        console.print(
+                            f"[dim]Skipping externally-managed: {rel}[/dim]"
+                        )
+                        continue
                 if process_file(skill, target, out_path, in_place, dry_run):
                     changed += 1
             except SkillParseError as e:
@@ -265,7 +274,7 @@ def main(
             console.print(f"\n[bold]{changed}/{total} file(s) changed[/bold]")
 
         if delete and output:
-            orphans = find_orphan_skills(path, output)
+            orphans = find_orphan_skills(path, output, ignore)
             if orphans:
                 action = "Would delete" if dry_run else "Deleting"
                 console.print(f"\n[bold yellow]{action} {len(orphans)} orphan(s):[/bold yellow]")
