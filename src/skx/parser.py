@@ -62,10 +62,13 @@ def _preprocess_frontmatter(fm_text: str) -> str:
         # 1. Multiple [...] segments (e.g., argument-hint: [path] [optional])
         # 2. Starts with [ but doesn't end with ] (incomplete YAML array)
         # 3. Starts with { (YAML mapping indicator)
+        # 4. Contains ": " (PyYAML reads it as a nested mapping key; Claude
+        #    Code's loader is lenient and allows colons in description prose)
         needs_quote = (
             value.count("[") > 1
             or (value.startswith("[") and not value.endswith("]"))
             or value.startswith("{")
+            or ": " in value
         )
 
         if needs_quote:

@@ -491,6 +491,44 @@ argument-hint: [--interval N] [--required-only]
         skill = parse_file(skill_file)
         assert skill.frontmatter["argument-hint"] == "[--interval N] [--required-only]"
 
+    def test_parses_description_with_inline_colon(self, tmp_path):
+        from skx.parser import parse_file
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: Save work. Default: add a status block. Fallback: scratchpad.
+---
+
+# Content
+"""
+        )
+        skill = parse_file(skill_file)
+        assert (
+            skill.frontmatter["description"]
+            == "Save work. Default: add a status block. Fallback: scratchpad."
+        )
+
+    def test_parses_description_with_quoted_phrase_and_colon(self, tmp_path):
+        from skx.parser import parse_file
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            '''---
+name: test-skill
+description: Walk the "After Action" rules: feedback, reflection, automation.
+---
+
+# Content
+'''
+        )
+        skill = parse_file(skill_file)
+        assert (
+            skill.frontmatter["description"]
+            == 'Walk the "After Action" rules: feedback, reflection, automation.'
+        )
+
     def test_parses_paths_with_braces(self, tmp_path):
         from skx.parser import parse_file
 
