@@ -25,8 +25,13 @@ BUNDLED_IGNORE_PATTERNS: dict[Format, list[str]] = {
 
 # Patterns that apply to every target (externally-maintained third-party skills).
 COMMON_IGNORE_PATTERNS: list[str] = [
-    # Maintained by the Plannotator tool itself.
+    # Maintained by the Plannotator tool itself; it installs its own copies
+    # into ~/.agents/skills/ which agent CLIs auto-discover, so syncing
+    # Claude-format duplicates into ~/.gemini/skills/ etc. causes conflicts.
     "plannotator-compound",
+    "plannotator-review",
+    "plannotator-annotate",
+    "plannotator-last",
 ]
 
 # Conventional output directories per target. Users can still override via --output.
