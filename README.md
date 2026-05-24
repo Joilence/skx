@@ -74,12 +74,12 @@ Pass `--output` to override.
 ### Exempting externally-maintained skills
 
 Some skills are maintained by other tools and must never be overwritten or
-deleted by sync. skx has **built-in protection** for known bundled paths:
+deleted by sync. skx has **built-in protection** for known bundled or externally managed paths:
 
-| Target | Bundled exemptions |
+| Target | Protected exemptions |
 |---|---|
 | `codex` | `.system/**`, `codex-primary-runtime/**` |
-| all targets | `plannotator-compound` |
+| all targets | Plannotator-managed skills: `plannotator-compound`, `plannotator-review`, `plannotator-annotate`, `plannotator-last`, `plannotator-setup-goal`, `plannotator-visual-explainer` |
 
 To add your own exemptions, drop a `.skxignore` file at the root of your
 output directory. Patterns use [gitignore syntax](https://git-scm.com/docs/gitignore).

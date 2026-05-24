@@ -491,6 +491,25 @@ argument-hint: [--interval N] [--required-only]
         skill = parse_file(skill_file)
         assert skill.frontmatter["argument-hint"] == "[--interval N] [--required-only]"
 
+    def test_parses_argument_hint_with_single_bracketed_prose(self, tmp_path):
+        from skx.parser import parse_file
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+argument-hint: [optional, "no-dashboards" to skip dashboards]
+---
+
+# Content
+"""
+        )
+        skill = parse_file(skill_file)
+        assert (
+            skill.frontmatter["argument-hint"]
+            == '[optional, "no-dashboards" to skip dashboards]'
+        )
+
     def test_parses_description_with_inline_colon(self, tmp_path):
         from skx.parser import parse_file
 
@@ -707,6 +726,28 @@ $ARGUMENTS here
         assert result.exit_code == 1
         assert "1 file(s) had errors" in result.output
         assert "1/2" in result.output  # 1 of 2 files changed
+
+    def test_parse_errors_preserve_bracketed_text(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: bad-skill
+bad-field: [optional, "no-dashboards" to skip dashboards]
+---
+
+# Content
+"""
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(skill_file), "--to", "gemini", "--dry-run"])
+
+        assert result.exit_code == 1
+        assert '[optional, "no-dashboards" to skip dashboards]' in result.output
 
     def test_codex_conversion_prunes_frontmatter(self, tmp_path):
         from click.testing import CliRunner
@@ -1129,35 +1170,41 @@ Use $ARGUMENTS to do things.
         # Orphan deleted
         assert not (out / "legacy" / "SKILL.md").exists()
 
-    def test_plannotator_compound_protected_by_default(self, tmp_path):
+    @pytest.mark.parametrize(
+        "skill_name",
+        [
+            "plannotator-compound",
+            "plannotator-setup-goal",
+            "plannotator-visual-explainer",
+        ],
+    )
+    def test_plannotator_skills_protected_by_default(self, tmp_path, skill_name):
         from click.testing import CliRunner
 
         from skx.cli import main
 
         src = tmp_path / "src"
         src.mkdir()
-        (src / "plannotator-compound").mkdir()
+        (src / skill_name).mkdir()
         src_content = (
-            "---\nname: plannotator-compound\ndescription: stale source\n"
+            f"---\nname: {skill_name}\ndescription: stale source\n"
             "---\n\nStale source body.\n"
         )
-        (src / "plannotator-compound" / "SKILL.md").write_text(src_content)
+        (src / skill_name / "SKILL.md").write_text(src_content)
 
         out = tmp_path / "out"
-        (out / "plannotator-compound").mkdir(parents=True)
+        (out / skill_name).mkdir(parents=True)
         live_content = (
-            "---\nname: plannotator-compound\ndescription: live from plannotator\n"
+            f"---\nname: {skill_name}\ndescription: live from plannotator\n"
             "---\n\nLive body.\n"
         )
-        (out / "plannotator-compound" / "SKILL.md").write_text(live_content)
+        (out / skill_name / "SKILL.md").write_text(live_content)
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, [str(src), "--to", "pi", "-o", str(out)]
-        )
+        result = runner.invoke(main, [str(src), "--to", "pi", "-o", str(out)])
         assert result.exit_code == 0
         # Live version NOT overwritten
-        assert (out / "plannotator-compound" / "SKILL.md").read_text() == live_content
+        assert (out / skill_name / "SKILL.md").read_text() == live_content
         assert "Skipping externally-managed" in result.output
 
     def test_default_output_path_used_when_not_specified(self, tmp_path, monkeypatch):

@@ -51,6 +51,7 @@ def _preprocess_frontmatter(fm_text: str) -> str:
             continue
 
         key, _, value = line.partition(":")
+        key_name = key.strip()
         value = value.strip()
 
         # Skip empty values or already quoted
@@ -59,13 +60,16 @@ def _preprocess_frontmatter(fm_text: str) -> str:
             continue
 
         # Quote if:
-        # 1. Multiple [...] segments (e.g., argument-hint: [path] [optional])
-        # 2. Starts with [ but doesn't end with ] (incomplete YAML array)
-        # 3. Starts with { (YAML mapping indicator)
-        # 4. Contains ": " (PyYAML reads it as a nested mapping key; Claude
+        # 1. argument-hint starts with [ (Claude treats it as prose;
+        #    YAML sees a flow sequence)
+        # 2. Multiple [...] segments (e.g., argument-hint: [path] [optional])
+        # 3. Starts with [ but doesn't end with ] (incomplete YAML array)
+        # 4. Starts with { (YAML mapping indicator)
+        # 5. Contains ": " (PyYAML reads it as a nested mapping key; Claude
         #    Code's loader is lenient and allows colons in description prose)
         needs_quote = (
-            value.count("[") > 1
+            (key_name == "argument-hint" and value.startswith("["))
+            or value.count("[") > 1
             or (value.startswith("[") and not value.endswith("]"))
             or value.startswith("{")
             or ": " in value

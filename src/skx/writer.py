@@ -32,6 +32,8 @@ COMMON_IGNORE_PATTERNS: list[str] = [
     "plannotator-review",
     "plannotator-annotate",
     "plannotator-last",
+    "plannotator-setup-goal",
+    "plannotator-visual-explainer",
 ]
 
 # Conventional output directories per target. Users can still override via --output.

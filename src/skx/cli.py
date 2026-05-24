@@ -213,7 +213,7 @@ def main(
     """
     if path is None:
         console.print(ctx.get_help())
-        sys.exit(0)
+        return
 
     if in_place and output:
         console.print("[red]Error: Cannot use --in-place with --output[/red]")
@@ -237,7 +237,7 @@ def main(
             out_path = output / path.name if output and output.is_dir() else output
             process_file(skill, target, out_path, in_place, dry_run)
         except SkillParseError as e:
-            console.print(f"[red]Error parsing {path}: {e}[/red]")
+            console.print(f"Error parsing {path}: {e}", style="red", markup=False)
             sys.exit(1)
         except OSError as e:
             console.print(f"[red]Error reading/writing {path}: {e}[/red]")
@@ -271,7 +271,9 @@ def main(
                 if process_file(skill, target, out_path, in_place, dry_run):
                     changed += 1
             except SkillParseError as e:
-                console.print(f"[red]Error parsing {skill_path}: {e}[/red]")
+                console.print(
+                    f"Error parsing {skill_path}: {e}", style="red", markup=False
+                )
                 errors += 1
             except OSError as e:
                 console.print(f"[red]Error reading/writing {skill_path}: {e}[/red]")
