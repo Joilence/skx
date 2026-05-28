@@ -1,4 +1,5 @@
-"""Transform rules for converting between Claude Code, Gemini CLI, Codex CLI, and Pi CLI skill syntax."""
+"""Transform rules for converting between Claude Code skill syntax and the
+shared agents-dir (Gemini) skill syntax."""
 
 import re
 from collections.abc import Mapping
@@ -8,12 +9,16 @@ from skx.parser import FrontmatterValue
 
 
 class Format(Enum):
-    """Skill format types."""
+    """Skill format types.
+
+    GEMINI is the syntax written into ~/.agents/skills (the shared dir read by
+    Codex CLI, Pi, OMP, and Gemini CLI). Only Gemini CLI expands `!{cmd}` at
+    skill-load time; the other agents see the literal text and rely on the
+    model to recognise it as a command to run via the bash tool.
+    """
 
     CLAUDE = "claude"
     GEMINI = "gemini"
-    CODEX = "codex"
-    PI = "pi"
 
 
 # Conversion rules: (pattern, replacement)
@@ -32,28 +37,9 @@ GEMINI_TO_CLAUDE: list[tuple[str, str]] = [
     (r"@\{([^}]+)\}", r"@\1"),  # @{file} -> @file
 ]
 
-# Codex CLI has no template directives. Conversion rewrites directives to prose.
-CLAUDE_TO_CODEX: list[tuple[str, str]] = [
-    (r"!`([^`]+)`", r"Run `\1`"),  # !`cmd` -> Run `cmd`
-    (r"\$ARGUMENTS\[(\d+)\]", r"argument \1"),  # $ARGUMENTS[N] -> argument N
-    (r"\$ARGUMENTS", r"the user's input"),  # $ARGUMENTS -> the user's input
-    (r"\$([0-9])(?!\d)", r"argument \1"),  # $N -> argument N (single digit only)
-    (r"@([a-zA-Z0-9._/-]+)(?=[\s\]\)\},:;]|$)", r"\1"),  # @file -> file
-]
-
 # Gemini CLI SKILL.md only reads these frontmatter fields.
-# Source: https://geminicli.com/docs/cli/skills/ — "Do not include any other fields."
+# Source: https://geminicli.com/docs/cli/skills/ ("Do not include any other fields.")
 GEMINI_KEEP_FRONTMATTER = {"name", "description"}
-
-# Codex CLI SKILL.md only supports these frontmatter fields.
-# Source: openai/codex codex-rs/core/src/skills/loader.rs SkillFrontmatter struct
-CODEX_KEEP_FRONTMATTER = {"name", "description", "metadata"}
-CODEX_NAME_MAX_LENGTH = 64
-CODEX_DESCRIPTION_MAX_LENGTH = 1024
-
-# Pi CLI SKILL.md only reads these frontmatter fields.
-# Source: badlogic/pi-mono packages/coding-agent/src/core/skills.ts SkillFrontmatter interface
-PI_KEEP_FRONTMATTER = {"name", "description", "disable-model-invocation"}
 
 
 def prune_frontmatter_for_gemini(
@@ -86,120 +72,6 @@ def ensure_gemini_frontmatter(
         isinstance(fm["description"], str) and not fm["description"].strip()
     ):
         fm["description"] = _derive_description(content, parent_dir)
-        generated.append("description")
-
-    if "name" not in fm:
-        fm["name"] = parent_dir
-        generated.append("name")
-
-    return fm, generated
-
-
-def prune_frontmatter_for_codex(
-    frontmatter: Mapping[str, FrontmatterValue],
-) -> dict[str, FrontmatterValue]:
-    """Keep only Codex-supported frontmatter fields.
-
-    Codex CLI recognizes: name, description, metadata (with short-description).
-    All other fields are stripped. Truncates name and description to Codex limits.
-    """
-    pruned = {k: v for k, v in frontmatter.items() if k in CODEX_KEEP_FRONTMATTER}
-    if "name" in pruned and isinstance(pruned["name"], str):
-        name = pruned["name"]
-        if len(name) > CODEX_NAME_MAX_LENGTH:
-            pruned["name"] = name[:CODEX_NAME_MAX_LENGTH]
-    if "description" in pruned and isinstance(pruned["description"], str):
-        desc = pruned["description"]
-        if len(desc) > CODEX_DESCRIPTION_MAX_LENGTH:
-            pruned["description"] = desc[:CODEX_DESCRIPTION_MAX_LENGTH]
-    return pruned
-
-
-def prune_frontmatter_for_pi(
-    frontmatter: Mapping[str, FrontmatterValue],
-) -> dict[str, FrontmatterValue]:
-    """Keep only Pi CLI-supported frontmatter fields.
-
-    Pi CLI reads: name, description, disable-model-invocation.
-    All other fields are silently ignored by Pi, so we strip them.
-    Unlike Codex, Pi has no length limits on name or description.
-    """
-    return {k: v for k, v in frontmatter.items() if k in PI_KEEP_FRONTMATTER}
-
-
-def validate_for_pi(
-    frontmatter: Mapping[str, FrontmatterValue],
-    parent_dir: str,
-) -> list[str]:
-    """Validate a skill meets Pi CLI requirements.
-
-    Returns a list of warning messages. Empty list means valid.
-    Pi requires 'description' and expects 'name' to match the parent directory.
-    """
-    warnings: list[str] = []
-    name = frontmatter.get("name")
-    if isinstance(name, str) and name != parent_dir:
-        warnings.append(f"name '{name}' does not match directory '{parent_dir}'")
-    return warnings
-
-
-def ensure_codex_frontmatter(
-    frontmatter: Mapping[str, FrontmatterValue],
-    content: str,
-    parent_dir: str,
-) -> tuple[dict[str, FrontmatterValue], list[str]]:
-    """Ensure frontmatter meets Codex CLI requirements, adding defaults as needed.
-
-    Codex requires 'description'. If missing, derives one from content.
-    Also ensures 'name' is present, using parent directory as fallback.
-    Truncates to Codex length limits.
-
-    Returns (updated frontmatter, list of fields that were auto-generated).
-    """
-    generated: list[str] = []
-    fm = dict(frontmatter)
-
-    if not fm.get("description") or (
-        isinstance(fm["description"], str) and not fm["description"].strip()
-    ):
-        desc = _derive_description(content, parent_dir)
-        if len(desc) > CODEX_DESCRIPTION_MAX_LENGTH:
-            desc = desc[:CODEX_DESCRIPTION_MAX_LENGTH]
-        fm["description"] = desc
-        generated.append("description")
-
-    if "name" not in fm:
-        name = parent_dir
-        if len(name) > CODEX_NAME_MAX_LENGTH:
-            name = name[:CODEX_NAME_MAX_LENGTH]
-        fm["name"] = name
-        generated.append("name")
-
-    return fm, generated
-
-
-def ensure_pi_frontmatter(
-    frontmatter: Mapping[str, FrontmatterValue],
-    content: str,
-    parent_dir: str,
-) -> tuple[dict[str, FrontmatterValue], list[str]]:
-    """Ensure frontmatter meets Pi CLI requirements, adding defaults as needed.
-
-    Pi requires 'description'. If missing, derives one from:
-    1. First markdown heading in content
-    2. First non-empty line of content
-    3. Directory name as fallback
-
-    Returns (updated frontmatter, list of fields that were auto-generated).
-    """
-    generated: list[str] = []
-    fm = dict(frontmatter)
-
-    if not fm.get("description") or (
-        isinstance(fm["description"], str) and not fm["description"].strip()
-    ):
-        desc = _derive_description(content, parent_dir)
-        fm["description"] = desc
         generated.append("description")
 
     if "name" not in fm:
@@ -263,15 +135,7 @@ def convert(content: str, target: Format) -> str:
 
     Does not preserve code blocks. Use convert_preserving_code_blocks for that.
     """
-    if target in (Format.CLAUDE, Format.PI):
-        # Pi uses identical content syntax to Claude
-        rules = GEMINI_TO_CLAUDE
-    elif target == Format.CODEX:
-        rules = CLAUDE_TO_CODEX
-    elif target == Format.GEMINI:
-        rules = CLAUDE_TO_GEMINI
-    else:
-        raise ValueError(f"Unsupported target format: {target}")
+    rules = GEMINI_TO_CLAUDE if target == Format.CLAUDE else CLAUDE_TO_GEMINI
     return _apply_rules(content, rules)
 
 
@@ -281,14 +145,6 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     Protects content inside fenced code blocks (```) and inline code (`)
     from transformation.
     """
-    # Codex rules assume Claude source. Convert Gemini->Claude first if needed.
-    if target == Format.CODEX and detect_format(content) == Format.GEMINI:
-        content = convert_preserving_code_blocks(content, Format.CLAUDE)
-
-    # Pi uses identical syntax to Claude. Convert Gemini->Claude first if needed.
-    if target == Format.PI and detect_format(content) == Format.GEMINI:
-        content = convert_preserving_code_blocks(content, Format.CLAUDE)
-
     code_blocks: list[str] = []
 
     def save_block(match: re.Match[str]) -> str:
@@ -301,33 +157,18 @@ def convert_preserving_code_blocks(content: str, target: Format) -> str:
     # Apply shell execution and argument transforms BEFORE protecting inline code.
     # Shell execution uses backticks (!`cmd`) that would otherwise be protected.
     # Argument references (`$ARGUMENTS`) in skill docs should be converted too.
-    if target == Format.CODEX:
-        protected = re.sub(r"!`([^`]+)`", r"Run `\1`", protected)
-        protected = re.sub(r"\$ARGUMENTS\[(\d+)\]", r"argument \1", protected)
-        protected = re.sub(r"\$ARGUMENTS", r"the user's input", protected)
-        protected = re.sub(r"\$([0-9])(?!\d)", r"argument \1", protected)
-    elif target == Format.GEMINI:
+    if target == Format.GEMINI:
         protected = re.sub(r"!`([^`]+)`", r"!{\1}", protected)
         protected = re.sub(r"\$ARGUMENTS", r"{{args}}", protected)
-    elif target in (Format.CLAUDE, Format.PI):
-        # Pi uses identical content syntax to Claude
+    else:
         protected = re.sub(r"!\{([^}]+)\}", r"!`\1`", protected)
         protected = re.sub(r"\{\{args\}\}", r"$ARGUMENTS", protected)
-    else:
-        raise ValueError(f"Unsupported target format: {target}")
 
     # Now protect remaining inline code
     protected = re.sub(r"`[^`]+`", save_block, protected)
 
     # Apply remaining transforms (file references only)
-    if target == Format.CODEX:
-        rules = CLAUDE_TO_CODEX[4:]  # @file -> file only
-    elif target in (Format.CLAUDE, Format.PI):
-        rules = GEMINI_TO_CLAUDE[2:]
-    elif target == Format.GEMINI:
-        rules = CLAUDE_TO_GEMINI[2:]
-    else:
-        raise ValueError(f"Unsupported target format: {target}")
+    rules = GEMINI_TO_CLAUDE[2:] if target == Format.CLAUDE else CLAUDE_TO_GEMINI[2:]
     converted = _apply_rules(protected, rules)
 
     # Restore code blocks

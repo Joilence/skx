@@ -1,4 +1,4 @@
-"""CLI for skx: Agent Skill format conversion (Claude Code, Gemini CLI, Codex CLI, Pi CLI)."""
+"""CLI for skx: convert SKILL.md between Claude Code and the shared agents-dir format."""
 
 import sys
 from difflib import unified_diff
@@ -13,13 +13,8 @@ from skx.transforms import (
     Format,
     convert_preserving_code_blocks,
     detect_format,
-    ensure_codex_frontmatter,
     ensure_gemini_frontmatter,
-    ensure_pi_frontmatter,
-    prune_frontmatter_for_codex,
     prune_frontmatter_for_gemini,
-    prune_frontmatter_for_pi,
-    validate_for_pi,
 )
 from skx.writer import (
     compute_output_path,
@@ -35,11 +30,16 @@ from skx.writer import (
 console = Console()
 
 
+# `agents` writes Gemini-format skills to ~/.agents/skills, the shared dir
+# Codex CLI, Pi, OMP, and Gemini CLI all read. We pick Gemini's syntax because
+# it is the only one of those agents that expands `!{cmd}` substitutions at
+# skill-load time. Codex/Pi/OMP see the literal `!{cmd}` text instead, but in
+# practice the model recognises it as a command to run via its bash tool, so
+# the substitution still serves as a usable hint rather than working as runtime
+# context injection.
 _EXPLICIT_TARGETS: dict[str, Format] = {
     "claude": Format.CLAUDE,
-    "gemini": Format.GEMINI,
-    "codex": Format.CODEX,
-    "pi": Format.PI,
+    "agents": Format.GEMINI,
 }
 
 
@@ -58,7 +58,7 @@ def get_target_format(to: str, content: str) -> Format:
     detected = detect_format(content)
     if detected is None:
         console.print(
-            "[yellow]Warning: Could not detect format, defaulting to gemini[/yellow]"
+            "[yellow]Warning: Could not detect format, defaulting to agents[/yellow]"
         )
         return Format.GEMINI
     return Format.CLAUDE if detected == Format.GEMINI else Format.GEMINI
@@ -72,42 +72,22 @@ def process_file(
     dry_run: bool,
 ) -> bool:
     """Process a single skill file. Returns True if changes were made."""
-    if target in (Format.GEMINI, Format.CODEX, Format.PI):
+    if target == Format.GEMINI:
         parent_dir = skill.path.parent.name
-        if target == Format.GEMINI:
-            skill.frontmatter, generated = ensure_gemini_frontmatter(
-                skill.frontmatter,
-                skill.content,
-                parent_dir,
-            )
-        elif target == Format.CODEX:
-            skill.frontmatter, generated = ensure_codex_frontmatter(
-                skill.frontmatter,
-                skill.content,
-                parent_dir,
-            )
-        else:
-            skill.frontmatter, generated = ensure_pi_frontmatter(
-                skill.frontmatter,
-                skill.content,
-                parent_dir,
-            )
+        skill.frontmatter, generated = ensure_gemini_frontmatter(
+            skill.frontmatter,
+            skill.content,
+            parent_dir,
+        )
         if generated:
             console.print(
                 f"[yellow]Auto-generated {', '.join(generated)} for {skill.path}[/yellow]"
             )
-        if target == Format.PI:
-            for w in validate_for_pi(skill.frontmatter, parent_dir):
-                console.print(f"[yellow]Warning: {skill.path}: {w}[/yellow]")
 
     original_output = skill.to_string()
 
     if target == Format.GEMINI:
         skill.frontmatter = prune_frontmatter_for_gemini(skill.frontmatter)
-    elif target == Format.CODEX:
-        skill.frontmatter = prune_frontmatter_for_codex(skill.frontmatter)
-    elif target == Format.PI:
-        skill.frontmatter = prune_frontmatter_for_pi(skill.frontmatter)
 
     skill.content = convert_preserving_code_blocks(skill.content, target)
 
@@ -150,9 +130,11 @@ def process_file(
 @click.argument("path", type=click.Path(exists=True, path_type=Path), required=False)
 @click.option(
     "--to",
-    type=click.Choice(["claude", "gemini", "codex", "pi", "auto"]),
+    type=click.Choice(["claude", "agents", "auto"]),
     default="auto",
-    help="Target format. 'auto' detects current format and converts to opposite.",
+    help="Target format. 'claude' writes Claude Code format to ~/.claude/skills. "
+    "'agents' writes Gemini format to ~/.agents/skills (read by Codex CLI, Pi, "
+    "OMP, Gemini CLI). 'auto' detects current format and converts to opposite.",
 )
 @click.option(
     "--output",
@@ -188,26 +170,25 @@ def main(
     dry_run: bool,
     delete: bool,
 ) -> None:
-    """Convert SKILL.md files between Claude Code, Gemini CLI, Codex CLI, and Pi CLI formats.
+    """Convert SKILL.md files between Claude Code and the shared agents-dir format.
 
     PATH can be a single SKILL.md file or a directory containing skill files.
 
     \b
     Examples:
-        # Convert single file (auto-detect format)
-        skx ./my-skill/SKILL.md --to gemini --output ./converted/
-        # Convert directory of skills (uses default output path per target)
-        skx ~/.claude/skills --to gemini
-        skx ~/.claude/skills --to codex
-        skx ~/.claude/skills --to pi
+        # Convert a Claude skills tree to the shared agents dir (Gemini format
+        # at ~/.agents/skills, read by Codex CLI, Pi, OMP, and Gemini CLI)
+        skx ~/.claude/skills --to agents
+        # Convert single file
+        skx ./my-skill/SKILL.md --to agents --output ./converted/SKILL.md
         # Sync: convert and remove SKILL.md files in output that no longer exist in source
-        skx ~/.claude/skills --to pi --delete
+        skx ~/.claude/skills --to agents --delete
         # Override default output path
-        skx ~/.claude/skills --to gemini --output /tmp/gemini-skills
+        skx ~/.claude/skills --to agents --output /tmp/agents-skills
         # In-place conversion (with backup)
-        skx ./SKILL.md --to gemini --in-place
+        skx ./SKILL.md --to agents --in-place
         # Dry run (show diff)
-        skx ./SKILL.md --to codex --dry-run
+        skx ./SKILL.md --to agents --dry-run
         # Auto-detect and convert to opposite format
         skx ./SKILL.md --to auto
     """
@@ -243,17 +224,16 @@ def main(
             console.print(f"[red]Error reading/writing {path}: {e}[/red]")
             sys.exit(1)
     else:
-        # Directory processing
         skill_files = find_skill_files(path)
         if not skill_files:
             console.print(f"[yellow]No SKILL.md files found in {path}[/yellow]")
             sys.exit(0)
 
         console.print(f"Found {len(skill_files)} skill file(s)")
-        ignore_target = explicit if explicit is not None else Format.CLAUDE
-        ignore = load_ignore_spec(output, ignore_target) if output else None
+        ignore = load_ignore_spec(output) if output else None
         changed = 0
         errors = 0
+        skipped = 0
         for skill_path in skill_files:
             try:
                 skill = parse_file(skill_path)
@@ -264,9 +244,8 @@ def main(
                 if ignore is not None and out_path is not None and output is not None:
                     rel = out_path.relative_to(output)
                     if ignore.match_file(str(rel)):
-                        console.print(
-                            f"[dim]Skipping externally-managed: {rel}[/dim]"
-                        )
+                        console.print(f"[dim]Skipping externally-managed: {rel}[/dim]")
+                        skipped += 1
                         continue
                 if process_file(skill, target, out_path, in_place, dry_run):
                     changed += 1
@@ -283,10 +262,14 @@ def main(
         if dry_run:
             console.print(f"\n[bold]{changed}/{total} file(s) would be changed[/bold]")
         elif output:
-            written = total - errors
-            console.print(
-                f"\n[bold]{changed}/{total} file(s) converted, {written}/{total} file(s) synced[/bold]"
+            written = total - errors - skipped
+            summary = (
+                f"\n[bold]{changed}/{total} file(s) converted, "
+                f"{written}/{total} file(s) synced[/bold]"
             )
+            if skipped:
+                summary += f" [dim]({skipped} skipped)[/dim]"
+            console.print(summary)
         else:
             console.print(f"\n[bold]{changed}/{total} file(s) changed[/bold]")
 
@@ -294,7 +277,9 @@ def main(
             orphans = find_orphan_skills(path, output, ignore)
             if orphans:
                 action = "Would delete" if dry_run else "Deleting"
-                console.print(f"\n[bold yellow]{action} {len(orphans)} orphan(s):[/bold yellow]")
+                console.print(
+                    f"\n[bold yellow]{action} {len(orphans)} orphan(s):[/bold yellow]"
+                )
                 for orphan in orphans:
                     console.print(f"  [yellow]{orphan}[/yellow]")
                     if not dry_run:

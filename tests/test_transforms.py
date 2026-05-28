@@ -10,9 +10,7 @@ from skx.transforms import (
     convert,
     convert_preserving_code_blocks,
     detect_format,
-    prune_frontmatter_for_codex,
     prune_frontmatter_for_gemini,
-    prune_frontmatter_for_pi,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -88,190 +86,6 @@ class TestGeminiFrontmatterPruning:
         assert len(result["description"]) == 2000
 
 
-class TestClaudeToCodexTransforms:
-    """Test Claude to Codex conversion (directive rewriting to prose)."""
-
-    def test_shell_execution(self):
-        assert convert('!`echo "hello"`', Format.CODEX) == 'Run `echo "hello"`'
-
-    def test_arguments(self):
-        assert (
-            convert("use $ARGUMENTS here", Format.CODEX) == "use the user's input here"
-        )
-
-    def test_indexed_arguments(self):
-        assert (
-            convert("$ARGUMENTS[0] and $ARGUMENTS[1]", Format.CODEX)
-            == "argument 0 and argument 1"
-        )
-
-    def test_positional_arguments(self):
-        assert convert("$0 and $1", Format.CODEX) == "argument 0 and argument 1"
-
-    def test_positional_arguments_ignores_dollar_amounts(self):
-        assert convert("costs $100", Format.CODEX) == "costs $100"
-        assert convert("$5 tip", Format.CODEX) == "argument 5 tip"
-        assert convert("$10 bill", Format.CODEX) == "$10 bill"
-
-    def test_file_reference(self):
-        assert (
-            convert("see @README.md for info", Format.CODEX) == "see README.md for info"
-        )
-
-    def test_file_reference_with_path(self):
-        assert convert("see @src/main.py", Format.CODEX) == "see src/main.py"
-
-    def test_combined(self):
-        content = "Run !`git diff` with $ARGUMENTS and check @README.md"
-        result = convert(content, Format.CODEX)
-        assert "Run `git diff`" in result
-        assert "the user's input" in result
-        assert result.count("@") == 0
-
-
-class TestCodexFrontmatterPruning:
-    """Test frontmatter pruning for Codex CLI."""
-
-    def test_keeps_only_codex_fields(self):
-        fm = {
-            "name": "test",
-            "description": "A test skill",
-            "argument-hint": "[file]",
-            "allowed-tools": "Read, Write",
-            "model": "sonnet",
-            "context": "fork",
-            "agent": "Explore",
-            "hooks": {},
-            "disable-model-invocation": True,
-            "user-invocable": False,
-        }
-        result = prune_frontmatter_for_codex(fm)
-        assert result == {"name": "test", "description": "A test skill"}
-
-    def test_strips_unknown_fields(self):
-        fm = {
-            "name": "test",
-            "description": "desc",
-            "license": "MIT",
-            "custom": "value",
-        }
-        result = prune_frontmatter_for_codex(fm)
-        assert result == {"name": "test", "description": "desc"}
-
-    def test_keeps_metadata(self):
-        fm = {
-            "name": "test",
-            "description": "desc",
-            "metadata": {"short-description": "short"},
-        }
-        result = prune_frontmatter_for_codex(fm)
-        assert result == {
-            "name": "test",
-            "description": "desc",
-            "metadata": {"short-description": "short"},
-        }
-
-    def test_truncates_long_description(self):
-        fm = {"name": "test", "description": "x" * 1100}
-        result = prune_frontmatter_for_codex(fm)
-        assert isinstance(result["description"], str)
-        assert len(result["description"]) == 1024
-
-    def test_truncates_long_name(self):
-        fm = {"name": "a" * 100, "description": "desc"}
-        result = prune_frontmatter_for_codex(fm)
-        assert isinstance(result["name"], str)
-        assert len(result["name"]) == 64
-
-    def test_preserves_short_description(self):
-        fm = {"name": "test", "description": "short"}
-        result = prune_frontmatter_for_codex(fm)
-        assert result["description"] == "short"
-
-
-class TestPiTransforms:
-    """Test Claude/Gemini to Pi conversion (content is identical to Claude)."""
-
-    def test_claude_to_pi_content_unchanged(self):
-        content = 'Run !`echo "hello"` with $ARGUMENTS and @README.md'
-        assert convert(content, Format.PI) == content
-
-    def test_gemini_to_pi_converts_syntax(self):
-        assert convert('!{echo "hello"}', Format.PI) == '!`echo "hello"`'
-        assert convert("use {{args}} here", Format.PI) == "use $ARGUMENTS here"
-        assert (
-            convert("see @{README.md} for info", Format.PI) == "see @README.md for info"
-        )
-
-    def test_pi_preserves_code_blocks_from_claude(self):
-        content = """Outside: $ARGUMENTS
-
-```bash
-# Inside: $ARGUMENTS should NOT change
-```
-
-Outside again: $ARGUMENTS
-"""
-        result = convert_preserving_code_blocks(content, Format.PI)
-        assert result == content  # No changes when source is already Claude/Pi syntax
-
-    def test_pi_converts_gemini_source(self):
-        content = "Execute !{echo hello} with {{args}} and @{README.md}"
-        result = convert_preserving_code_blocks(content, Format.PI)
-        assert "!`echo hello`" in result
-        assert "$ARGUMENTS" in result
-        assert "@README.md" in result
-        assert "!{" not in result
-        assert "{{args}}" not in result
-
-
-class TestPiFrontmatterPruning:
-    """Test frontmatter pruning for Pi CLI."""
-
-    def test_keeps_only_pi_fields(self):
-        fm = {
-            "name": "test",
-            "description": "A test skill",
-            "argument-hint": "[file]",
-            "allowed-tools": "Read, Write",
-            "model": "sonnet",
-            "context": "fork",
-            "agent": "Explore",
-            "hooks": {},
-            "disable-model-invocation": True,
-            "user-invocable": False,
-        }
-        result = prune_frontmatter_for_pi(fm)
-        assert result == {
-            "name": "test",
-            "description": "A test skill",
-            "disable-model-invocation": True,
-        }
-
-    def test_strips_unknown_fields(self):
-        fm = {
-            "name": "test",
-            "description": "desc",
-            "license": "MIT",
-            "custom": "value",
-        }
-        result = prune_frontmatter_for_pi(fm)
-        assert result == {"name": "test", "description": "desc"}
-
-    def test_keeps_disable_model_invocation(self):
-        fm = {"name": "test", "description": "desc", "disable-model-invocation": True}
-        result = prune_frontmatter_for_pi(fm)
-        assert result["disable-model-invocation"] is True
-
-    def test_no_truncation(self):
-        fm = {"name": "a" * 200, "description": "x" * 2000}
-        result = prune_frontmatter_for_pi(fm)
-        assert isinstance(result["name"], str)
-        assert isinstance(result["description"], str)
-        assert len(result["name"]) == 200
-        assert len(result["description"]) == 2000
-
-
 class TestCodeBlockProtection:
     """Test that code blocks are preserved during transformation."""
 
@@ -297,42 +111,6 @@ Outside again: $ARGUMENTS
         result = convert_preserving_code_blocks(content, Format.GEMINI)
         assert "Transform {{args}}" in result
         assert "`{{args}}`" in result
-
-    def test_codex_preserves_fenced_code_block(self):
-        content = """Outside: $ARGUMENTS
-
-```bash
-# Inside code block: $ARGUMENTS should NOT change
-echo "hello"
-```
-
-Outside again: $ARGUMENTS
-"""
-        result = convert_preserving_code_blocks(content, Format.CODEX)
-        assert "Outside: the user's input" in result
-        assert "Outside again: the user's input" in result
-        assert "$ARGUMENTS" in result  # Inside code block preserved
-
-    def test_codex_converts_inline_code_arguments(self):
-        content = "Transform $ARGUMENTS and also `$ARGUMENTS` in inline code"
-        result = convert_preserving_code_blocks(content, Format.CODEX)
-        assert "Transform the user's input" in result
-        assert "`the user's input`" in result
-
-    def test_codex_shell_directive_rewriting(self):
-        content = "Context: !`git branch --show-current`\nDiff: !`git diff`"
-        result = convert_preserving_code_blocks(content, Format.CODEX)
-        assert "Run `git branch --show-current`" in result
-        assert "Run `git diff`" in result
-
-    def test_codex_converts_gemini_source(self):
-        content = "Execute !{echo hello} with {{args}} and @{README.md}"
-        result = convert_preserving_code_blocks(content, Format.CODEX)
-        assert "!{" not in result
-        assert "{{args}}" not in result
-        assert "@{" not in result
-        assert "Run `echo hello`" in result
-        assert "the user's input" in result
 
     def test_preserves_multiple_code_blocks(self):
         content = """
@@ -388,18 +166,6 @@ class TestFixtureFiles:
     def test_gemini_fixture_detected_as_gemini(self):
         skill = parse_file(FIXTURES / "gemini_skill.md")
         assert detect_format(skill.content) == Format.GEMINI
-
-    def test_codex_fixture_matches_expected(self):
-        skill = parse_file(FIXTURES / "claude_skill.md")
-        expected = parse_file(FIXTURES / "codex_skill.md")
-        result = convert_preserving_code_blocks(skill.content, Format.CODEX)
-        assert result.strip() == expected.content.strip()
-
-    def test_pi_fixture_content_matches_claude(self):
-        claude_skill = parse_file(FIXTURES / "claude_skill.md")
-        pi_skill = parse_file(FIXTURES / "pi_skill.md")
-        result = convert_preserving_code_blocks(claude_skill.content, Format.PI)
-        assert result.strip() == pi_skill.content.strip()
 
     def test_roundtrip_claude_to_gemini_to_claude(self):
         skill = parse_file(FIXTURES / "claude_skill.md")
@@ -534,13 +300,13 @@ description: Save work. Default: add a status block. Fallback: scratchpad.
 
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text(
-            '''---
+            """---
 name: test-skill
 description: Walk the "After Action" rules: feedback, reflection, automation.
 ---
 
 # Content
-'''
+"""
         )
         skill = parse_file(skill_file)
         assert (
@@ -721,7 +487,7 @@ $ARGUMENTS here
         (bad_dir / "SKILL.md").write_bytes(b"\xff\xfe invalid")
 
         runner = CliRunner()
-        result = runner.invoke(main, [str(tmp_path), "--to", "gemini", "--dry-run"])
+        result = runner.invoke(main, [str(tmp_path), "--to", "agents", "--dry-run"])
 
         assert result.exit_code == 1
         assert "1 file(s) had errors" in result.output
@@ -744,156 +510,10 @@ bad-field: [optional, "no-dashboards" to skip dashboards]
         )
 
         runner = CliRunner()
-        result = runner.invoke(main, [str(skill_file), "--to", "gemini", "--dry-run"])
+        result = runner.invoke(main, [str(skill_file), "--to", "agents", "--dry-run"])
 
         assert result.exit_code == 1
         assert '[optional, "no-dashboards" to skip dashboards]' in result.output
-
-    def test_codex_conversion_prunes_frontmatter(self, tmp_path):
-        from click.testing import CliRunner
-
-        from skx.cli import main
-
-        skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text(
-            """---
-name: test-skill
-description: A test skill
-allowed-tools: Read, Write, Bash(git:*)
-argument-hint: "[file]"
-model: sonnet
----
-
-Use $ARGUMENTS to do things.
-"""
-        )
-
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main, [str(skill_file), "--to", "codex", "-o", str(output_dir / "SKILL.md")]
-        )
-        assert result.exit_code == 0
-
-        output = (output_dir / "SKILL.md").read_text()
-        assert "allowed-tools" not in output
-        assert "argument-hint" not in output
-        assert "model" not in output
-        assert "name: test-skill" in output
-        assert "description: A test skill" in output
-        assert "the user's input" in output
-
-    def test_codex_frontmatter_only_changes_are_written(self, tmp_path):
-        from click.testing import CliRunner
-
-        from skx.cli import main
-
-        skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text(
-            """---
-name: test-skill
-description: A test skill
-allowed-tools: Read, Write
-model: sonnet
----
-
-Plain body with no directives.
-"""
-        )
-
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main, [str(skill_file), "--to", "codex", "-o", str(output_dir / "SKILL.md")]
-        )
-        assert result.exit_code == 0
-        assert "no changes needed" not in result.output
-
-        output = (output_dir / "SKILL.md").read_text()
-        assert "allowed-tools" not in output
-        assert "model" not in output
-        assert "name: test-skill" in output
-
-    def test_pi_conversion_prunes_frontmatter(self, tmp_path):
-        from click.testing import CliRunner
-
-        from skx.cli import main
-
-        skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text(
-            """---
-name: test-skill
-description: A test skill
-allowed-tools: Read, Write, Bash(git:*)
-argument-hint: "[file]"
-model: sonnet
-disable-model-invocation: true
----
-
-Use $ARGUMENTS to do things.
-"""
-        )
-
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main, [str(skill_file), "--to", "pi", "-o", str(output_dir / "SKILL.md")]
-        )
-        assert result.exit_code == 0
-
-        output = (output_dir / "SKILL.md").read_text()
-        assert "allowed-tools" not in output
-        assert "argument-hint" not in output
-        assert "model: sonnet" not in output
-        assert "name: test-skill" in output
-        assert "description: A test skill" in output
-        assert "disable-model-invocation" in output
-        # Content unchanged (Pi uses same syntax as Claude)
-        assert "$ARGUMENTS" in output
-
-    def test_gemini_conversion_prunes_frontmatter(self, tmp_path):
-        from click.testing import CliRunner
-
-        from skx.cli import main
-
-        skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text(
-            """---
-name: test-skill
-description: A test skill
-allowed-tools: Read, Write, Bash(git:*)
-argument-hint: "[file]"
-model: sonnet
-disable-model-invocation: true
----
-
-Use $ARGUMENTS to do things.
-"""
-        )
-
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main, [str(skill_file), "--to", "gemini", "-o", str(output_dir / "SKILL.md")]
-        )
-        assert result.exit_code == 0
-
-        output = (output_dir / "SKILL.md").read_text()
-        assert "allowed-tools" not in output
-        assert "argument-hint" not in output
-        assert "model: sonnet" not in output
-        assert "disable-model-invocation" not in output
-        assert "name: test-skill" in output
-        assert "description: A test skill" in output
-        assert "{{args}}" in output
 
     def test_delete_removes_orphan_skills(self, tmp_path):
         from click.testing import CliRunner
@@ -923,7 +543,7 @@ Use $ARGUMENTS to do things.
 
         runner = CliRunner()
         result = runner.invoke(
-            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+            main, [str(src), "--to", "agents", "-o", str(out), "--delete"]
         )
         assert result.exit_code == 0
         assert (out / "keep" / "SKILL.md").exists()
@@ -957,7 +577,7 @@ Use $ARGUMENTS to do things.
 
         runner = CliRunner()
         result = runner.invoke(
-            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+            main, [str(src), "--to", "agents", "-o", str(out), "--delete"]
         )
         assert result.exit_code == 0
         # SKILL.md deleted but assets/ preserved (parent not empty)
@@ -985,7 +605,7 @@ Use $ARGUMENTS to do things.
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [str(src), "--to", "gemini", "-o", str(out), "--delete", "--dry-run"],
+            [str(src), "--to", "agents", "-o", str(out), "--delete", "--dry-run"],
         )
         assert result.exit_code == 0
         assert "Would delete" in result.output
@@ -997,15 +617,13 @@ Use $ARGUMENTS to do things.
         from skx.cli import main
 
         skill_file = tmp_path / "SKILL.md"
-        skill_file.write_text(
-            "---\nname: x\ndescription: x\n---\n\nBody.\n"
-        )
+        skill_file.write_text("---\nname: x\ndescription: x\n---\n\nBody.\n")
         out = tmp_path / "out"
         out.mkdir()
 
         runner = CliRunner()
         result = runner.invoke(
-            main, [str(skill_file), "--to", "gemini", "-o", str(out), "--delete"]
+            main, [str(skill_file), "--to", "agents", "-o", str(out), "--delete"]
         )
         assert result.exit_code == 1
         assert "--delete requires" in result.output
@@ -1053,11 +671,13 @@ Use $ARGUMENTS to do things.
 
         runner = CliRunner()
         result = runner.invoke(
-            main, [str(src), "--to", "gemini", "-o", str(out), "--delete"]
+            main, [str(src), "--to", "agents", "-o", str(out), "--delete"]
         )
         assert result.exit_code == 0
         # External file was NOT overwritten
-        assert (out / "plannotator-compound" / "SKILL.md").read_text() == external_content
+        assert (
+            out / "plannotator-compound" / "SKILL.md"
+        ).read_text() == external_content
         # Managed skill was written
         assert (out / "managed" / "SKILL.md").exists()
         # Ignored orphan was preserved
@@ -1082,9 +702,7 @@ Use $ARGUMENTS to do things.
         out.mkdir()
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, [str(src), "--to", "gemini", "-o", str(out)]
-        )
+        result = runner.invoke(main, [str(src), "--to", "agents", "-o", str(out)])
         assert result.exit_code == 0
         assert (out / "x" / "SKILL.md").exists()
 
@@ -1121,54 +739,13 @@ Use $ARGUMENTS to do things.
         (out / ".skxignore").write_text("external-*\n")
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, [str(src), "--to", "gemini", "-o", str(out)]
-        )
+        result = runner.invoke(main, [str(src), "--to", "agents", "-o", str(out)])
         assert result.exit_code == 0
         # Glob matched: external-a and external-b not overwritten
         assert "Old." in (out / "external-a" / "SKILL.md").read_text()
         assert "Old." in (out / "external-b" / "SKILL.md").read_text()
         # Normal skill synced
         assert (out / "normal" / "SKILL.md").exists()
-
-    def test_codex_bundled_ignore_protects_system_skills(self, tmp_path):
-        from click.testing import CliRunner
-
-        from skx.cli import main
-
-        src = tmp_path / "src"
-        src.mkdir()
-        (src / "user-skill").mkdir()
-        (src / "user-skill" / "SKILL.md").write_text(
-            "---\nname: user-skill\ndescription: d\n---\n\nBody.\n"
-        )
-
-        out = tmp_path / "codex-out"
-        # Simulate Codex-bundled skills at protected paths
-        (out / ".system" / "skill-creator").mkdir(parents=True)
-        (out / ".system" / "skill-creator" / "SKILL.md").write_text(
-            "---\nname: skill-creator\ndescription: bundled\n---\n\nBundled.\n"
-        )
-        (out / "codex-primary-runtime" / "slides").mkdir(parents=True)
-        (out / "codex-primary-runtime" / "slides" / "SKILL.md").write_text(
-            "---\nname: PowerPoint\ndescription: bundled\n---\n\nBundled.\n"
-        )
-        # A regular orphan that should be deleted
-        (out / "legacy").mkdir()
-        (out / "legacy" / "SKILL.md").write_text(
-            "---\nname: legacy\ndescription: d\n---\n\nBody.\n"
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main, [str(src), "--to", "codex", "-o", str(out), "--delete"]
-        )
-        assert result.exit_code == 0
-        # Bundled skills preserved
-        assert (out / ".system" / "skill-creator" / "SKILL.md").exists()
-        assert (out / "codex-primary-runtime" / "slides" / "SKILL.md").exists()
-        # Orphan deleted
-        assert not (out / "legacy" / "SKILL.md").exists()
 
     @pytest.mark.parametrize(
         "skill_name",
@@ -1201,7 +778,7 @@ Use $ARGUMENTS to do things.
         (out / skill_name / "SKILL.md").write_text(live_content)
 
         runner = CliRunner()
-        result = runner.invoke(main, [str(src), "--to", "pi", "-o", str(out)])
+        result = runner.invoke(main, [str(src), "--to", "agents", "-o", str(out)])
         assert result.exit_code == 0
         # Live version NOT overwritten
         assert (out / skill_name / "SKILL.md").read_text() == live_content
@@ -1231,9 +808,9 @@ Use $ARGUMENTS to do things.
         )
 
         runner = CliRunner()
-        result = runner.invoke(cli_module.main, [str(src), "--to", "gemini"])
+        result = runner.invoke(cli_module.main, [str(src), "--to", "agents"])
         assert result.exit_code == 0
-        expected_out = fake_home / ".gemini" / "skills" / "sample" / "SKILL.md"
+        expected_out = fake_home / ".agents" / "skills" / "sample" / "SKILL.md"
         assert expected_out.exists()
         assert "Writing to default output" in result.output
 
@@ -1246,7 +823,121 @@ Use $ARGUMENTS to do things.
         skill_file.write_bytes(b"\xff\xfe invalid utf-8")
 
         runner = CliRunner()
-        result = runner.invoke(main, [str(skill_file), "--to", "gemini"])
+        result = runner.invoke(main, [str(skill_file), "--to", "agents"])
 
         assert result.exit_code == 1
         assert "not valid UTF-8" in result.output
+
+
+class TestAgentsTarget:
+    """Tests for the shared `--to agents` target (Gemini format @ ~/.agents/skills)."""
+
+    def test_agents_produces_gemini_format(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+name: test-skill
+description: A test skill
+allowed-tools: Read, Write
+model: sonnet
+---
+
+Run !`git diff` with $ARGUMENTS on @README.md for context.
+"""
+        )
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [str(skill_file), "--to", "agents", "-o", str(output_dir / "SKILL.md")],
+        )
+        assert result.exit_code == 0
+
+        output = (output_dir / "SKILL.md").read_text()
+        # Gemini-format substitutions
+        assert "!{git diff}" in output
+        assert "{{args}}" in output
+        assert "@{README.md}" in output
+        # Gemini frontmatter pruning (name + description only)
+        assert "name: test-skill" in output
+        assert "description: A test skill" in output
+        assert "allowed-tools" not in output
+        assert "model: sonnet" not in output
+
+    def test_default_output_path_for_agents_is_agents_skills_dir(
+        self, tmp_path, monkeypatch
+    ):
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        import importlib
+
+        import skx.writer as writer_module
+
+        importlib.reload(writer_module)
+
+        assert (
+            writer_module.default_output_path(writer_module.Format.GEMINI)
+            == fake_home / ".agents" / "skills"
+        )
+        assert (
+            writer_module.default_output_path(writer_module.Format.CLAUDE)
+            == fake_home / ".claude" / "skills"
+        )
+
+    def test_skipped_files_not_counted_as_written(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        src = tmp_path / "src"
+        src.mkdir()
+        # Normal skill (will be converted + written)
+        (src / "normal").mkdir()
+        (src / "normal" / "SKILL.md").write_text(
+            "---\nname: normal\ndescription: d\n---\n\nBody.\n"
+        )
+        # Plannotator skill (bundled-ignored)
+        (src / "plannotator-review").mkdir()
+        (src / "plannotator-review" / "SKILL.md").write_text(
+            "---\nname: plannotator-review\ndescription: d\n---\n\nBody.\n"
+        )
+
+        out = tmp_path / "out"
+        out.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(src), "--to", "agents", "-o", str(out)])
+        assert result.exit_code == 0
+        assert "1/2 file(s) synced" in result.output
+        assert "1 skipped" in result.output
+        assert (out / "normal" / "SKILL.md").exists()
+        assert not (out / "plannotator-review").exists()
+
+    def test_auto_converts_agents_format_back_to_claude(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            "---\nname: test\ndescription: d\n---\n\nRun !{git diff} with {{args}} on @{README.md} for context.\n"
+        )
+
+        out_file = tmp_path / "out.md"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(skill_file), "--to", "auto", "-o", str(out_file)]
+        )
+        assert result.exit_code == 0
+        output = out_file.read_text()
+        assert "!`git diff`" in output
+        assert "$ARGUMENTS" in output
+        assert "@README.md" in output

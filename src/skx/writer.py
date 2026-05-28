@@ -11,23 +11,12 @@ from skx.transforms import Format
 
 SKXIGNORE_FILENAME = ".skxignore"
 
-# Bundled skills that each agent ships with. Syncing Claude source over them
-# would delete or corrupt tool-provided skills.
-BUNDLED_IGNORE_PATTERNS: dict[Format, list[str]] = {
-    Format.CLAUDE: [],
-    Format.GEMINI: [],
-    Format.CODEX: [
-        ".system/**",
-        "codex-primary-runtime/**",
-    ],
-    Format.PI: [],
-}
-
-# Patterns that apply to every target (externally-maintained third-party skills).
+# Externally-maintained third-party skills that must not be written over or
+# deleted by sync.
 COMMON_IGNORE_PATTERNS: list[str] = [
     # Maintained by the Plannotator tool itself; it installs its own copies
-    # into ~/.agents/skills/ which agent CLIs auto-discover, so syncing
-    # Claude-format duplicates into ~/.gemini/skills/ etc. causes conflicts.
+    # into ~/.agents/skills/ which agent CLIs auto-discover, so re-syncing
+    # skx-converted duplicates into the same tree causes conflicts.
     "plannotator-compound",
     "plannotator-review",
     "plannotator-annotate",
@@ -37,11 +26,12 @@ COMMON_IGNORE_PATTERNS: list[str] = [
 ]
 
 # Conventional output directories per target. Users can still override via --output.
+# Format.GEMINI maps to the shared ~/.agents/skills dir (read by Codex CLI, Pi,
+# OMP, and Gemini CLI) rather than Gemini's own ~/.gemini/skills, since that's
+# where the Gemini-format files do the most good across agents.
 DEFAULT_OUTPUT_PATHS: dict[Format, Path] = {
     Format.CLAUDE: Path.home() / ".claude" / "skills",
-    Format.GEMINI: Path.home() / ".gemini" / "skills",
-    Format.CODEX: Path.home() / ".codex" / "skills",
-    Format.PI: Path.home() / ".pi" / "agent" / "skills",
+    Format.GEMINI: Path.home() / ".agents" / "skills",
 }
 
 
@@ -81,24 +71,20 @@ def compute_output_path(input_path: Path, input_base: Path, output_base: Path) -
     Example:
         input_path: /home/user/.claude/skills/my-skill/SKILL.md
         input_base: /home/user/.claude/skills
-        output_base: /home/user/.gemini/skills
-        -> /home/user/.gemini/skills/my-skill/SKILL.md
+        output_base: /home/user/.agents/skills
+        -> /home/user/.agents/skills/my-skill/SKILL.md
     """
     relative = input_path.relative_to(input_base)
     return output_base / relative
 
 
-def load_ignore_spec(output_base: Path, target: Format) -> GitIgnoreSpec:
-    """Build ignore spec combining bundled defaults, common patterns, and user file.
+def load_ignore_spec(output_base: Path) -> GitIgnoreSpec:
+    """Build ignore spec from common patterns and the user's ``.skxignore``.
 
-    Precedence (additive): bundled target defaults + common patterns + user's
-    ``.skxignore`` at ``output_base`` if present. Bundled patterns protect
-    agent-provided skills (e.g. Codex's ``.system/**``) from being written over
-    or deleted by sync.
+    Precedence (additive): common patterns + user's ``.skxignore`` at
+    ``output_base`` if present.
     """
-    lines: list[str] = []
-    lines.extend(BUNDLED_IGNORE_PATTERNS.get(target, []))
-    lines.extend(COMMON_IGNORE_PATTERNS)
+    lines: list[str] = list(COMMON_IGNORE_PATTERNS)
     user_file = output_base / SKXIGNORE_FILENAME
     if user_file.is_file():
         lines.extend(user_file.read_text().splitlines())
