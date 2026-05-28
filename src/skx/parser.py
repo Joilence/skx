@@ -50,6 +50,12 @@ def _preprocess_frontmatter(fm_text: str) -> str:
             lines.append(line)
             continue
 
+        # Indented lines are YAML continuation/nested values, never top-level
+        # keys; splitting them on ':' would corrupt embedded colons in the value.
+        if line[:1] in (" ", "\t"):
+            lines.append(line)
+            continue
+
         key, _, value = line.partition(":")
         key_name = key.strip()
         value = value.strip()

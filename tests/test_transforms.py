@@ -460,6 +460,36 @@ description: 'A single-quoted value: with colon'
         skill = parse_file(skill_file)
         assert skill.frontmatter["description"] == "A single-quoted value: with colon"
 
+    def test_parses_multiline_value_with_embedded_colons(self, tmp_path):
+        """Indented continuation lines must not be split on their first colon
+        and reassembled with ': ', which would turn ':*' into ': *' (a YAML
+        mapping signal) and break parsing."""
+        import warnings
+
+        from skx.parser import parse_file
+
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text(
+            """---
+allowed-tools: Bash(git status:*), Bash(git diff:*),
+  Bash(git rev-parse:*), Bash(git add:*),
+  Bash(git commit:*)
+name: multiline
+description: d
+---
+
+# Body
+"""
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            skill = parse_file(skill_file)
+        assert skill.frontmatter["name"] == "multiline"
+        tools = skill.frontmatter["allowed-tools"]
+        assert isinstance(tools, str)
+        assert "git rev-parse:*" in tools
+        assert "git add:*" in tools
+
 
 class TestCLIErrorHandling:
     """Test CLI error handling and batch processing resilience."""
