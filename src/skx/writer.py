@@ -60,9 +60,27 @@ def write_in_place(skill: SkillFile, backup: bool = True) -> Path | None:
     return backup_path
 
 
+# Source directories that never hold skills of the tree being synced. Claude
+# Code downloads claude.ai account skills into `synced/` and parks skills it
+# stops syncing in `.trash/`; hidden directories in general are not skills.
+RESERVED_SOURCE_DIRS: frozenset[str] = frozenset({"synced"})
+
+
+def is_excluded_source(relative: Path) -> bool:
+    """Return whether a SKILL.md path, relative to the source root, sits in a hidden or reserved directory."""
+    dirs = relative.parts[:-1]
+    if not dirs:
+        return False
+    return dirs[0] in RESERVED_SOURCE_DIRS or any(d.startswith(".") for d in dirs)
+
+
 def find_skill_files(directory: Path) -> list[Path]:
-    """Find all SKILL.md files in a directory (recursive)."""
-    return list(directory.rglob("SKILL.md"))
+    """Find all SKILL.md files in a directory (recursive), skipping hidden and reserved directories."""
+    return [
+        p
+        for p in directory.rglob("SKILL.md")
+        if not is_excluded_source(p.relative_to(directory))
+    ]
 
 
 def compute_output_path(input_path: Path, input_base: Path, output_base: Path) -> Path:
@@ -99,8 +117,10 @@ def find_orphan_skills(
     """Find SKILL.md files in output that have no corresponding source in input.
 
     Returns paths of orphan SKILL.md files (not directories). An orphan is any
-    SKILL.md at output_base/<rel> whose mirror input_base/<rel> does not exist.
-    Paths matched by ``ignore`` are excluded (treated as externally-maintained).
+    SKILL.md at output_base/<rel> whose mirror input_base/<rel> does not exist
+    or lies in a directory ``is_excluded_source`` skips, so copies leaked by
+    earlier syncs get removed. Paths matched by ``ignore`` are excluded
+    (treated as externally-maintained).
     """
     if not output_base.is_dir():
         return []
@@ -110,7 +130,7 @@ def find_orphan_skills(
         if ignore is not None and ignore.match_file(str(relative)):
             continue
         source = input_base / relative
-        if not source.exists():
+        if not source.exists() or is_excluded_source(relative):
             orphans.append(skill_file)
     return orphans
 

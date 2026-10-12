@@ -583,6 +583,33 @@ bad-field: [optional, "no-dashboards" to skip dashboards]
         assert not (out / "orphan").exists()
         assert not (out / "nested").exists()
 
+    def test_hidden_and_synced_source_dirs_are_skipped_and_cleaned(self, tmp_path):
+        from click.testing import CliRunner
+
+        from skx.cli import main
+
+        body = "---\nname: {0}\ndescription: d\n---\n\nBody.\n"
+        src = tmp_path / "src"
+        excluded = ["synced/org_acct/pdf", ".trash/123-abc/deep-research"]
+        for rel in ["keep", *excluded]:
+            (src / rel).mkdir(parents=True)
+            (src / rel / "SKILL.md").write_text(body.format(Path(rel).name))
+
+        out = tmp_path / "out"
+        for rel in excluded:
+            (out / rel).mkdir(parents=True)
+            (out / rel / "SKILL.md").write_text(body.format(Path(rel).name))
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main, [str(src), "--to", "agents", "-o", str(out), "--delete"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Found 1 skill file(s)" in result.output
+        assert (out / "keep" / "SKILL.md").exists()
+        for rel in excluded:
+            assert not (out / rel / "SKILL.md").exists()
+
     def test_delete_preserves_sibling_assets(self, tmp_path):
         from click.testing import CliRunner
 

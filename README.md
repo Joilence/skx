@@ -87,6 +87,10 @@ syntax choice matters:
   string. In practice the model recognises it as a command to run via its
   bash tool, so the marker still works as a usable hint.
 
+### Skipped source directories
+
+Hidden directories and a top-level `synced/` in the source tree are never read as skills. Claude Code downloads claude.ai account skills into `~/.claude/skills/synced/` and parks skills it stops syncing in `~/.claude/skills/.trash/`. With `--delete`, copies of them left in the output by an earlier sync count as orphans and go to the trash.
+
 ### Exempting externally-maintained skills
 
 Some skills are maintained by other tools and must never be overwritten or
